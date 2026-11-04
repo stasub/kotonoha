@@ -1,0 +1,26 @@
+{
+  "id": "./",
+  "name": "ことのは帖",
+  "short_name": "ことのは帖",
+  "description": "縦書き原稿用紙・単行本・文庫本で執筆する日本語アプリ（Firebase暗号化同期の検証版）",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f0e7",
+  "theme_color": "#f5f0e7",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    }
+  ]
+}
