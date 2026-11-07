@@ -1,7 +1,7 @@
 /* ことのは帖 PWA オフライン起動用 Service Worker
    静的ファイルだけをキャッシュします。原稿・メモ・バックアップはキャッシュしません。
    アプリ更新時は CACHE_VERSION を変更してください。 */
-const CACHE_VERSION = 'kotonoha-static-firebase-beta-2026-11-04-2';
+const CACHE_VERSION = 'kotonoha-static-firebase-beta-2026-11-07-diagnostics';
 const CACHE_PREFIX = 'kotonoha-static-';
 const ROOT = new URL('./', self.registration.scope);
 const ASSETS = [
@@ -57,7 +57,19 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // マニフェストとアイコンだけキャッシュ。将来のAPI応答はキャッシュしない。
+  // 同期コードは必ずネットワークを優先。接続できないときだけ静的キャッシュを使う。
+  // 古い修正がSafari内のキャッシュに残り続けることを避ける。
+  if (requestURL.pathname === new URL('./cloud-sync.js', ROOT).pathname) {
+    event.respondWith(fetch(request).then(response => {
+      if (response.ok) {
+        const copy=response.clone();
+        event.waitUntil(caches.open(CACHE_VERSION).then(cache=>cache.put(request,copy)));
+      }
+      return response;
+    }).catch(async()=>await caches.match(request)||Response.error()));
+    return;
+  }
+  // アプリの外部API応答・ユーザーデータはキャッシュしない。
   if (!ASSETS.includes(requestURL.href)) return;
   event.respondWith(caches.match(request).then(hit => hit || fetch(request)));
 });

@@ -27,6 +27,11 @@ const enc = new TextEncoder(), dec = new TextDecoder();
 const NOTE = 'global-note-v1';
 let user = null;
 let key = null;
+let connecting = false;
+let connectStep = '';
+let lastErrorAt = 0;
+let connectionWatchdog = 0;
+const CONNECT_VERSION = '同期診断 2026-11-07';
 let inProgress = false;
 let rerun = false;
 let syncTimer = 0;
@@ -49,13 +54,23 @@ const status = (s,error=false)=>{
   const el=$('cloudStatus');if(el){el.textContent=s;el.style.color=error?'#b24335':'#5c7865'}
   const box=$('cloudDialogMessage');if(box)box.textContent=error?s:'';
 };
+// ログイン中は背後のヘッダーだけでなく、ダイアログ内に処理状況を表示する。
+// UI上の経過表示であり、通信や暗号化の成功を意味しない。
+const showConnectStep = (label) => {
+  connectStep=label;
+  status(label);
+  const box=$('cloudDialogMessage');
+  if(box){box.style.color='#5c7865';box.textContent=label;}
+};
 const report = e => {
   console.error('ことのは帖同期',e);
-  const message = e?.message || String(e);
+  const message = String(e?.message || e || '不明なエラー').slice(0,200);
+  const code = e?.code ? ` [${e.code}]` : '';
   if (/permission-denied/i.test(e?.code||'')) status('同期不可：Firestoreルールを確認',true);
   else if (/unavailable|offline|network/i.test(e?.code||'')) status('オフライン：端末保存中',true);
   else status('同期できません（端末には保存済み）',true);
-  $('cloudDialogMessage').textContent='同期処理でエラーが発生したよ。コンソールも確認してね。'+message.slice(0,120);
+  const box=$('cloudDialogMessage');
+  if(box){box.style.color='#b24335';box.textContent=`${connectStep || '同期中'}でエラー${code}: ${message}`;}
 };
 const payload = (id) => id===NOTE ? ({value:B.note()}) : B.get(id);
 const hash = async p => b64(await crypto.subtle.digest('SHA-256',enc.encode(JSON.stringify(p))));
@@ -224,7 +239,14 @@ async function beforeDelete(id){
 }
 window.KotonohaCloud={active:isActive,beforeDelete,requestSync};
 
-$('cloudOpen').addEventListener('click',()=>{$('cloudDialog').showModal()});
+$('cloudOpen').addEventListener('click',()=>{
+  $('cloudDialog').showModal();
+  const box=$('cloudDialogMessage');
+  if(box && !connecting){
+    box.style.color='#5c7865';
+    box.textContent=`${CONNECT_VERSION} を読み込み済み。下のボタンで接続確認を始められるよ。`;
+  }
+});
 $('cloudClose').addEventListener('click',()=>{$('cloudDialog').close()});
 $('cloudLogout').addEventListener('click',async()=>{
   key=null;user=null;
@@ -232,20 +254,54 @@ $('cloudLogout').addEventListener('click',async()=>{
   clearInterval(activePoll);status('クラウドからログアウト');$('cloudDialog').close();
 });
 $('cloudConnect').addEventListener('click',async()=>{
+  // 二重送信を防ぎ、何が進行しているか必ず画面に表示する。
+  if(connecting)return;
   const button=$('cloudConnect');
   const email=$('cloudEmail').value.trim();
   const pw=$('cloudPassword').value;
   const phrase=$('cloudPassphrase').value;
-  if(phrase.length<12){status('暗号化パスフレーズは12文字以上にしてね',true);return}
-  if(!crypto?.subtle){status('HTTPS接続が必要だよ',true);return}
+  if(!email||!pw){
+    const box=$('cloudDialogMessage');
+    if(box){box.style.color='#b24335';box.textContent='メールアドレスとログイン用パスワードを入力してね';}
+    return;
+  }
+  if(phrase.length<12){
+    const box=$('cloudDialogMessage');
+    if(box){box.style.color='#b24335';box.textContent='暗号化パスフレーズは12文字以上にしてね';}
+    return;
+  }
+  if(!window.crypto?.subtle){
+    const box=$('cloudDialogMessage');
+    if(box){box.style.color='#b24335';box.textContent='HTTPSの安全な接続が必要だよ';}
+    return;
+  }
+  if(!navigator.onLine){
+    const box=$('cloudDialogMessage');
+    if(box){box.style.color='#b24335';box.textContent='オフラインのようだよ。ネット接続を確認してね';}
+    return;
+  }
+  connecting=true;
   button.disabled=true;
+  const originalText=button.textContent;
+  button.textContent='接続を確認中…';
+  showConnectStep('① Firebaseへログイン中…');
+  // 長時間待ちになった場合、原因を追えるようダイアログに案内する。
+  // ネットワーク処理は勝手にキャンセルせず、同時リクエストも発行しない。
+  connectionWatchdog=setTimeout(()=>{
+    const box=$('cloudDialogMessage');
+    if(connecting && box){
+      box.style.color='#a04c3c';
+      box.textContent=`${connectStep}（応答に時間がかかっています。電波やSafariの通信を確認してね。タブを開き直しても端末内データは消えません。「Webサイトデータを削除」はしないでね）`;
+    }
+  },15000);
   try{
-    status('ログイン・暗号化鍵を確認中…');
     const credential=await signInWithEmailAndPassword(auth,email,pw);
     const uid=credential.user.uid;
+    showConnectStep('② Firebaseログイン成功。端末データと暗号化鍵を確認中…');
     const owner=await B.readMeta('owner');
     if(owner && owner!==uid)throw new Error('この端末は別のFirebaseユーザーにひもづいてるよ。データの混在を防ぐため同期を停止したよ');
     const newKey=await ensureKey(phrase,uid);
+    showConnectStep('③ 暗号化鍵の確認成功。同期を準備中…');
     user=credential.user;
     key=newKey;
     await B.writeMeta('owner',uid);
@@ -259,7 +315,12 @@ $('cloudConnect').addEventListener('click',async()=>{
     key=null;user=null;report(e);
     // 誤ったキー・ユーザーはログイン状態にも残さない。
     try{await signOut(auth)}catch{}
-  }finally{button.disabled=false}
+  }finally{
+    clearTimeout(connectionWatchdog);
+    connecting=false;
+    button.disabled=false;
+    button.textContent=originalText;
+  }
 });
 window.addEventListener('kotonoha:worksaved',e=>requestSync(e.detail?.id));
 window.addEventListener('kotonoha:notesaved',()=>requestSync(NOTE));
@@ -270,6 +331,7 @@ document.addEventListener('focusout',()=>{
   if(skippedForFocus){setTimeout(()=>{if(!B.editableFocused())syncAll()},500)}
 });
 onAuthStateChanged(auth,u=>{
+  if(connecting || Date.now()-lastErrorAt<15000)return;
   if(u&&!key)status('ログイン済み・原稿の鍵を入力してね');
   else if(!u&&!key)status('クラウド未接続');
 });
