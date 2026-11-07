@@ -24,7 +24,7 @@ const db = getFirestore(app);
 const B = window.KotonohaBridge;
 const $ = id => document.getElementById(id);
 const enc = new TextEncoder(), dec = new TextDecoder();
-const NOTE = '__global_note__';
+const NOTE = 'global-note-v1';
 let user = null;
 let key = null;
 let inProgress = false;
