@@ -276,6 +276,8 @@ const $=id=>document.getElementById(id);
 const DB_NAME='kotonoha-writer-v1';
 const DEFAULT_TITLE='無題の作品';
 let db=null,works=new Map(),currentId=null,activeStyle='manu',noteMode='work';
+// A fresh device shows a temporary blank page until the user edits or imports a work.
+let transientStarterId=null;
 const nativeInPlace=/(iPhone|iPad|iPod)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const nativeComposing=new WeakSet(),nativePending=new WeakMap();
 const nativeImePreview=new WeakMap(); // iOS未確定文字の表示だけを保持。作品本文は確定後に更新
@@ -295,11 +297,26 @@ function openDB(){return new Promise((resolve,reject)=>{if(!indexedDB)return rej
 function txRead(store,method,arg){return new Promise((resolve,reject)=>{const x=db.transaction(store,'readonly');const q=x.objectStore(store)[method](arg);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)})}
 function txWrite(store,method,arg){return new Promise((resolve,reject)=>{const x=db.transaction(store,'readwrite');const q=x.objectStore(store)[method](arg);x.oncomplete=()=>resolve(q.result);x.onerror=()=>reject(x.error||q.error);x.onabort=()=>reject(x.error||new Error('保存中断'))})}
 function makeWork(title=DEFAULT_TITLE){return {id:uuid(),title,text:'',rubies:[],note:'',showTitle:true,kinsoku:false,horizontal:false,updated:Date.now()}}
+// Distinguish a pristine auto-generated page from a real document.
+// Never identify real works by title alone: the user may intentionally have an empty work.
+function isUnusedStarter(id){
+ if(!id||id!==transientStarterId)return false;
+ const w=works.get(id);
+ return !!w && w.title==='はじめての物語' && w.text==='' && w.note==='' &&
+   Array.isArray(w.rubies) && w.rubies.length===0 && w.showTitle===true &&
+   w.kinsoku===false && w.horizontal===false;
+}
+function discardUnusedStarter(){
+ if(!isUnusedStarter(transientStarterId))return false;
+ const id=transientStarterId;
+ works.delete(id);transientStarterId=null;
+ return true;
+}
 function normalWork(w){return {id:String(w.id||uuid()),title:String(w.title||DEFAULT_TITLE),text:String(w.text||''),rubies:Array.isArray(w.rubies)?w.rubies.filter(r=>Number.isInteger(r.start)&&Number.isInteger(r.end)&&r.end>r.start&&r.end<=String(w.text||'').length&&typeof r.reading==='string').map(r=>({start:r.start,end:r.end,reading:r.reading})):[],note:String(w.note||''),showTitle:w.showTitle!==false,kinsoku:!!w.kinsoku,horizontal:!!w.horizontal,updated:Number(w.updated)||Date.now()}}
 function updateStats(){const w=current();if(!w)return;const cnt=charLength(w.text);$('charCount').textContent=cnt.toLocaleString('ja-JP')+' 字';$('pageCount').textContent='原稿用紙 約 '+Math.max(1,Math.ceil(cnt/400)).toLocaleString('ja-JP')+' 枚'}
 function refreshWorkList(){const root=$('workList');root.replaceChildren();const all=[...works.values()].sort((a,b)=>b.updated-a.updated);for(const w of all){const b=document.createElement('button');b.type='button';b.className='work-card'+(w.id===currentId?' active':'');b.dataset.id=w.id;const ttl=document.createElement('span');ttl.className='work-card-title';ttl.textContent=w.title||DEFAULT_TITLE;const cap=document.createElement('span');cap.className='work-card-caption';cap.textContent=charLength(w.text).toLocaleString('ja-JP')+'字 ・ '+jpDate(w.updated);b.append(ttl,cap);b.addEventListener('click',()=>selectWork(w.id));root.append(b)}}
 function scheduleSave(){setState('端末に保存中…');clearTimeout(saveTimer);const id=currentId;saveTimer=setTimeout(()=>saveNow(id),450)}
-async function saveNow(id=currentId){if(!db||!works.has(id))return;const data=structuredClone(works.get(id));try{await txWrite('works','put',data);lastSavedAt=Date.now();setState('この端末に保存済み');window.dispatchEvent(new CustomEvent('kotonoha:worksaved',{detail:{id}}));}catch(e){setState('保存できません！',true);say('保存に失敗。必ず書き出しで原稿を確保してね')}}
+async function saveNow(id=currentId){if(!db||!works.has(id))return;if(isUnusedStarter(id))return;if(id===transientStarterId)transientStarterId=null;const data=structuredClone(works.get(id));try{await txWrite('works','put',data);lastSavedAt=Date.now();setState('この端末に保存済み');window.dispatchEvent(new CustomEvent('kotonoha:worksaved',{detail:{id}}));}catch(e){setState('保存できません！',true);say('保存に失敗。必ず書き出しで原稿を確保してね')}}
 function change(){const w=current();if(!w)return;rememberedNativeSelection=null;w.updated=Date.now();updateStats();scheduleSave();checkpoint(w).catch(()=>{});}
 async function checkpoint(w){if(!db||!w||(!w.text&&!w.note))return;const now=Date.now();if(now-(lastHistoryAt.get(w.id)||0)<60000)return;lastHistoryAt.set(w.id,now);try{const snapshots=await txRead('history','getAll');for(const x of snapshots.filter(x=>x.workId===w.id).sort((a,b)=>b.time-a.time).slice(HISTORY_LIMIT-1))await txWrite('history','delete',x.id);await txWrite('history','put',{id:uuid(),workId:w.id,time:now,title:w.title,text:w.text,rubies:structuredClone(w.rubies),note:w.note});}catch(e){console.warn('history',e)}}
 function extractContent(root){
@@ -1105,9 +1122,9 @@ function wireNative(el){
  });
 }
 function renderRubyList(){const w=current();if(!w)return;const root=$('rubyList');root.replaceChildren();$('rubyCount').textContent=w.rubies.length;if(!w.rubies.length){const s=document.createElement('span');s.className='empty-note';s.textContent='まだルビはありません';root.append(s);return}for(const [i,r]of w.rubies.entries()){const row=document.createElement('div');row.className='ruby-item';const ruby=document.createElement('ruby');ruby.textContent=w.text.slice(r.start,r.end);const rt=document.createElement('rt');rt.textContent=r.reading;ruby.append(rt);const b=document.createElement('button');b.textContent='削除';b.title='このルビだけ外す';b.addEventListener('click',()=>{w.rubies.splice(i,1);change();renderAll();say('ルビを外したよ')});row.append(ruby,b);root.append(row)}}
-async function selectWork(id){if(!works.has(id)||id===currentId)return;clearTimeout(saveTimer);if(current()){await checkpoint(current());await saveNow(currentId)}currentId=id;renderAll();refreshWorkList();try{localStorage.setItem('kotonoha-current-id',id)}catch(e){}}
+async function selectWork(id){if(!works.has(id)||id===currentId)return;clearTimeout(saveTimer);if(current()){await checkpoint(current());await saveNow(currentId)}discardUnusedStarter();currentId=id;renderAll();refreshWorkList();try{localStorage.setItem('kotonoha-current-id',id)}catch(e){}}
 let globalNote='';
-async function createWork(){clearTimeout(saveTimer);if(current()){await checkpoint(current());await saveNow(currentId)}const w=makeWork();works.set(w.id,w);currentId=w.id;renderAll();refreshWorkList();scheduleSave();$('workTitle').focus();$('workTitle').select();}
+async function createWork(){clearTimeout(saveTimer);if(current()){await checkpoint(current());await saveNow(currentId)}discardUnusedStarter();const w=makeWork();works.set(w.id,w);currentId=w.id;renderAll();refreshWorkList();scheduleSave();$('workTitle').focus();$('workTitle').select();}
 async function saveGlobalNote(){if(!db)return;try{await txWrite('settings','put',{key:'globalNote',value:globalNote});setState('この端末に保存済み');window.dispatchEvent(new Event('kotonoha:notesaved'))}catch(e){setState('メモ保存失敗',true)}}
 async function showHistory(){const all=(await txRead('history','getAll')).filter(x=>x.workId===currentId).sort((a,b)=>b.time-a.time);const root=$('historyList');root.replaceChildren();if(!all.length){root.textContent='まだ復元履歴はありません。文章を編集してしばらくすると記録されるよ。'}for(const h of all){const row=document.createElement('div');row.className='history-row';const label=document.createElement('span');label.textContent=jpDate(h.time)+' ・ '+charLength(h.text)+' 字';const b=document.createElement('button');b.textContent='この版に戻す';b.addEventListener('click',async()=>{if(!confirm('現在の文章をこの履歴に置き換える？'))return;await checkpoint(current());const w=current();w.text=h.text;w.rubies=h.rubies;w.note=h.note;change();renderAll();$('historyDialog').close();say('履歴から復元したよ')});row.append(label,b);root.append(row)}$('historyDialog').showModal()}
 function download(filename,body,type='application/octet-stream'){const blob=body instanceof Blob?body:new Blob([body],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}
@@ -1115,7 +1132,7 @@ function base64(bytes){let str='';for(let i=0;i<bytes.length;i+=8192)str+=String
 function unbase64(str){return Uint8Array.from(atob(str),c=>c.charCodeAt(0))}
 async function passphraseKey(pass,salt){const raw=await crypto.subtle.importKey('raw',new TextEncoder().encode(pass),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:350000,hash:'SHA-256'},raw,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
 async function encryptedExport(data,name){if(!crypto?.subtle){say('暗号化機能が使えません。HTTPSの公開URLから開いてね');return}const p=prompt('バックアップを暗号化するための長いパスフレーズを入力してね（12文字以上）。忘れると復元できません。');if(p===null)return;if(p.length<12){say('パスフレーズは12文字以上にしてね');return}const verify=prompt('確認のため、もう一度入力してね');if(verify!==p){say('入力が一致しなかったよ');return}try{const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));const key=await passphraseKey(p,salt);const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify(data)));download(name+'.encrypted.json',JSON.stringify({format:'kotonoha-encrypted-v1',iterations:350000,salt:base64(salt),iv:base64(iv),ciphertext:base64(new Uint8Array(ct))},null,2),'application/json');say('暗号化バックアップを書き出したよ')}catch(e){say('バックアップの暗号化に失敗したよ')}}
-async function importBackup(file){let obj;try{obj=JSON.parse(await file.text());if(obj.format==='kotonoha-encrypted-v1'){if(!crypto?.subtle)throw new Error('HTTPSが必要');const pw=prompt('バックアップのパスフレーズを入力してね');if(pw===null)return;const key=await passphraseKey(pw,unbase64(obj.salt));const bytes=await crypto.subtle.decrypt({name:'AES-GCM',iv:unbase64(obj.iv)},key,unbase64(obj.ciphertext));obj=JSON.parse(new TextDecoder().decode(bytes))}if(obj.format!=='kotonoha-backup-v1'||!Array.isArray(obj.works))throw new Error('対応していない形式');const incoming=obj.works.slice(0,300).map(normalWork);if(!confirm(`${incoming.length}作品を新しい作品として取り込むよ。今の作品は残すけど、続ける？`))return;for(const w of incoming){w.id=uuid();w.title+='（復元）';works.set(w.id,w);await txWrite('works','put',w)}if(typeof obj.globalNote==='string'&&obj.globalNote){globalNote=[globalNote,obj.globalNote].filter(Boolean).join('\n\n--- 復元した共通メモ ---\n');await saveGlobalNote()}currentId=incoming.at(0)?.id||currentId;renderAll();refreshWorkList();say(incoming.length+'作品を復元したよ')}catch(e){say('復元できなかったよ。形式かパスフレーズを確認してね')}}
+async function importBackup(file){let obj;try{obj=JSON.parse(await file.text());if(obj.format==='kotonoha-encrypted-v1'){if(!crypto?.subtle)throw new Error('HTTPSが必要');const pw=prompt('バックアップのパスフレーズを入力してね');if(pw===null)return;const key=await passphraseKey(pw,unbase64(obj.salt));const bytes=await crypto.subtle.decrypt({name:'AES-GCM',iv:unbase64(obj.iv)},key,unbase64(obj.ciphertext));obj=JSON.parse(new TextDecoder().decode(bytes))}if(obj.format!=='kotonoha-backup-v1'||!Array.isArray(obj.works))throw new Error('対応していない形式');const incoming=obj.works.slice(0,300).map(normalWork);if(!confirm(`${incoming.length}作品を新しい作品として取り込むよ。今の作品は残すけど、続ける？`))return;discardUnusedStarter();for(const w of incoming){w.id=uuid();w.title+='（復元）';works.set(w.id,w);await txWrite('works','put',w)}if(typeof obj.globalNote==='string'&&obj.globalNote){globalNote=[globalNote,obj.globalNote].filter(Boolean).join('\n\n--- 復元した共通メモ ---\n');await saveGlobalNote()}currentId=incoming.at(0)?.id||currentId;renderAll();refreshWorkList();say(incoming.length+'作品を復元したよ')}catch(e){say('復元できなかったよ。形式かパスフレーズを確認してね')}}
 function escXML(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')}
 function docxParagraphs(w){const boldTag='<w:rPr><w:rFonts w:ascii="Yu Mincho" w:eastAsia="Yu Mincho"/><w:b/></w:rPr>';const run=(t)=>'<w:r><w:rPr><w:rFonts w:ascii="Yu Mincho" w:eastAsia="Yu Mincho"/></w:rPr><w:t xml:space="preserve">'+escXML(t)+'</w:t></w:r>';const ruby=(base,reading)=>'<w:ruby><w:rubyPr><w:rubyAlign w:val="center"/><w:hps w:val="12"/><w:hpsRaise w:val="15"/><w:hpsBaseText w:val="22"/></w:rubyPr><w:rt>'+run(reading)+'</w:rt><w:rubyBase>'+run(base)+'</w:rubyBase></w:ruby>';
  let out='<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>'+boldTag+'<w:t>'+escXML(w.title)+'</w:t></w:r></w:p>';let cur=0;for(const line of w.text.split('\n')){const st=cur,end=cur+line.length;const rs=w.rubies.filter(r=>r.start>=st&&r.end<=end).sort((a,b)=>a.start-b.start);let pos=st,contents='';for(const r of rs){if(r.start<pos)continue;if(r.start>pos)contents+=run(w.text.slice(pos,r.start));contents+=ruby(w.text.slice(r.start,r.end),r.reading);pos=r.end}if(pos<end)contents+=run(w.text.slice(pos,end));out+='<w:p>'+contents+'</w:p>';cur=end+1}return out}
@@ -1250,11 +1267,11 @@ $('rubyRemove').addEventListener('click',()=>{
  if(before===w.rubies.length){say('その範囲にはルビがないよ');return}
  change();renderAll();say('選択範囲のルビを外したよ');
 });
-$('exportBtn').addEventListener('click',()=>$('exportDialog').showModal());$('backupTop').addEventListener('click',()=>exportBy('all'));document.querySelectorAll('[data-export]').forEach(e=>e.addEventListener('click',()=>exportBy(e.dataset.export)));$('importBtn').addEventListener('click',()=>$('importFile').click());$('importFile').addEventListener('change',async(e)=>{if(e.target.files?.[0])await importBackup(e.target.files[0]);e.target.value=''});$('deleteWork').addEventListener('click',async()=>{const w=current();if(!w||!confirm('「'+w.title+'」をこの端末から削除する？ この操作は取り消せません。\n先にバックアップを取るのがおすすめ。'))return;if(window.KotonohaCloud?.active?.()){const allowed=await window.KotonohaCloud.beforeDelete(w.id);if(!allowed){say('クラウドの状態を確認できないため削除しなかったよ');return}}clearTimeout(saveTimer);await txWrite('works','delete',w.id);works.delete(w.id);if(!works.size){const fresh=makeWork();works.set(fresh.id,fresh);await txWrite('works','put',fresh)}currentId=works.keys().next().value;renderAll();refreshWorkList();$('exportDialog').close();say('作品を削除したよ')});$('historyBtn').addEventListener('click',showHistory);$('closeHistory').addEventListener('click',()=>$('historyDialog').close());$('noticeClose').addEventListener('click',()=>$('safetyBanner').remove());
+$('exportBtn').addEventListener('click',()=>$('exportDialog').showModal());$('backupTop').addEventListener('click',()=>exportBy('all'));document.querySelectorAll('[data-export]').forEach(e=>e.addEventListener('click',()=>exportBy(e.dataset.export)));$('importBtn').addEventListener('click',()=>$('importFile').click());$('importFile').addEventListener('change',async(e)=>{if(e.target.files?.[0])await importBackup(e.target.files[0]);e.target.value=''});$('deleteWork').addEventListener('click',async()=>{const w=current();if(!w||!confirm('「'+w.title+'」をこの端末から削除する？ この操作は取り消せません。\n先にバックアップを取るのがおすすめ。'))return;if(window.KotonohaCloud?.active?.()){const allowed=await window.KotonohaCloud.beforeDelete(w.id);if(!allowed){say('クラウドの状態を確認できないため削除しなかったよ');return}}clearTimeout(saveTimer);await txWrite('works','delete',w.id);works.delete(w.id);if(!works.size){const fresh=makeWork('はじめての物語');works.set(fresh.id,fresh);transientStarterId=fresh.id}currentId=works.keys().next().value;renderAll();refreshWorkList();$('exportDialog').close();say('作品を削除したよ')});$('historyBtn').addEventListener('click',showHistory);$('closeHistory').addEventListener('click',()=>$('historyDialog').close());$('noticeClose').addEventListener('click',()=>$('safetyBanner').remove());
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();exportBy('all')}});
 window.addEventListener('beforeunload',()=>{if(current())saveNow(currentId)});
 }
-async function init(){configure();try{db=await openDB();const rows=await txRead('works','getAll');for(const row of rows){const w=normalWork(row);works.set(w.id,w)}globalNote=(await txRead('settings','get','globalNote'))?.value||'';if(!works.size){const a=makeWork('はじめての物語');works.set(a.id,a);await txWrite('works','put',a)}let preferred;try{preferred=localStorage.getItem('kotonoha-current-id')}catch(e){}currentId=works.has(preferred)?preferred:[...works.keys()][0];renderAll();refreshWorkList();setState('この端末に保存済み');}catch(e){console.error(e);setState('端末保存を利用できません',true);$('safetyBanner').textContent='端末保存の初期化に失敗しました。ブラウザのプライベートモードを解除するなどして再度開いてね。';return}
+async function init(){configure();try{db=await openDB();const rows=await txRead('works','getAll');for(const row of rows){const w=normalWork(row);works.set(w.id,w)}globalNote=(await txRead('settings','get','globalNote'))?.value||'';if(!works.size){const a=makeWork('はじめての物語');works.set(a.id,a);transientStarterId=a.id}let preferred;try{preferred=localStorage.getItem('kotonoha-current-id')}catch(e){}currentId=works.has(preferred)?preferred:[...works.keys()][0];renderAll();refreshWorkList();setState('この端末に保存済み');}catch(e){console.error(e);setState('端末保存を利用できません',true);$('safetyBanner').textContent='端末保存の初期化に失敗しました。ブラウザのプライベートモードを解除するなどして再度開いてね。';return}
 if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')){navigator.serviceWorker?.register('./sw.js').catch(e=>console.warn('serviceworker',e))}
 }
 /* 入力後にキーボードを閉じやすくする: ①余白をタップ ②タイトルでEnter */
@@ -1277,16 +1294,24 @@ if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostn
 /* このブリッジはクラウド同期用。オリジナルの執筆・入力エンジンを変更しない。 */
 window.KotonohaBridge={
   ready:()=>!!db,
-  list:()=>[...works.values()].map(x=>structuredClone(x)),
-  get:id=>works.has(id)?structuredClone(works.get(id)):null,
+  list:()=>[...works.values()].filter(x=>!isUnusedStarter(x.id)).map(x=>structuredClone(x)),
+  get:id=>works.has(id)&&!isUnusedStarter(id)?structuredClone(works.get(id)):null,
   note:()=>globalNote,
   readMeta:async key=>(await txRead('settings','get','cloud:'+key))?.value||null,
   writeMeta:async(key,value)=>txWrite('settings','put',{key:'cloud:'+key,value}),
   importWork:async work=>{
-   const w=normalWork(work);
-   works.set(w.id,w);await txWrite('works','put',w);
-   refreshWorkList();if(currentId===w.id)renderAll();
-   return w.id;
+    const w=normalWork(work);
+    // Write the received work first. Never lose the placeholder if persistence fails.
+    await txWrite('works','put',w);
+    const wasStarter=isUnusedStarter(currentId);
+    if(wasStarter)discardUnusedStarter();
+    works.set(w.id,w);
+    if(wasStarter){
+      currentId=w.id;
+      try{localStorage.setItem('kotonoha-current-id',w.id)}catch(e){}
+    }
+    refreshWorkList();if(wasStarter||currentId===w.id)renderAll();
+    return w.id;
   },
   conflictCopy:async work=>{
    const w=normalWork({...work,id:uuid(),title:String(work.title||DEFAULT_TITLE)+'（同期競合・保護コピー）',updated:Date.now()});
@@ -1308,6 +1333,6 @@ window.KotonohaBridge={
 init();
 
 </script>
-<script type="module" src="./cloud-sync.js"></script>
+<script type="module" src="./cloud-sync.js?v=20261107-starter-v1"></script>
 </body>
 </html>
