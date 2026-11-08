@@ -195,12 +195,33 @@
 /* v0.2.8: 単行本・文庫でも、選択範囲の色付けと変換中の青ラインを出す */
 .book-preview .marked-char{background:rgba(61,132,247,.28);border-radius:2px}
 .book-preview.composing .marked-char{background:rgba(160,76,60,.14);box-shadow:inset 2.5px 0 0 #2f6fe4;border-radius:0}
+
+/* v0.5 — document zoom: pinch in mobile, independent of exported content */
+:root{--paper-zoom:1;--library-width:218px;--notes-width:247px}
+.paper-controls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:9px;padding:9px 3px 12px;color:var(--muted);font-size:12px}
+.paper-controls button{padding:5px 9px;font-size:13px;min-width:30px}
+.paper-controls #paperZoom{width:124px;max-width:25vw;accent-color:var(--accent);cursor:pointer}
+.paper-controls output{min-width:43px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums}
+.paper-controls .zoom-reset{font-size:11px}
+.manu-pages,.book-view{zoom:var(--paper-zoom)}
+/* Two-finger gesture is handled only inside the page viewport. Single-touch scrolling stays native. */
+@media (pointer:coarse){.paper-viewport{touch-action:pan-x pan-y}}
+.panel-splitter{display:none}
+@media(min-width:1161px){
+ .app-layout{grid-template-columns:minmax(145px,var(--library-width)) 9px minmax(0,1fr) 9px minmax(185px,var(--notes-width))}
+ .panel-splitter{display:flex;align-items:center;justify-content:center;cursor:col-resize;touch-action:none;user-select:none;-webkit-user-select:none;background:#f0e9de;border-left:1px solid var(--border);border-right:1px solid var(--border);color:#aa8c79;transition:background .15s}
+ .panel-splitter span{font-size:21px;font-weight:700;line-height:1}
+ .panel-splitter:hover,.panel-splitter:focus-visible,.panel-splitter.dragging{background:#d9b5a0;color:#673b32;outline:0}
+ .sidebar{grid-column:1}.main-panel{grid-column:3}.notes-panel{grid-column:5}
+}
+@media(max-width:700px){.paper-controls{justify-content:flex-start}.paper-controls #paperZoom{width:95px}}
+@media print{.manu-pages,.book-view{zoom:1!important}.paper-controls,.panel-splitter{display:none!important}}
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">縦書き直接入力 v0.2.4</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">二本指ズーム対応 v0.5</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -210,6 +231,7 @@
   <div id="workList" class="work-list" aria-label="作品一覧"></div>
   <div class="aside-bottom"><div class="storage-dot"></div><span>この端末に自動保存</span><button id="importBtn" class="tiny" title="バックアップから復元">復元</button></div>
 </aside>
+<div id="librarySplitter" class="panel-splitter" data-edge="library" role="separator" tabindex="0" aria-label="作品一覧の幅を調整" aria-orientation="vertical" title="左右へドラッグして幅を変更（ダブルクリックで初期化）"><span>⋮</span></div>
 <main class="main-panel">
   <div class="document-header">
     <div class="document-title-block"><label class="kicker" for="workTitle">CURRENT WORK</label><input id="workTitle" class="work-title" value="" placeholder="作品タイトル" maxlength="160" aria-label="作品タイトル"></div>
@@ -220,12 +242,21 @@
     <div class="tools-right"><label class="check-control" id="horizontalOption"><input type="checkbox" id="horizontal"> 横書き</label><label class="check-control" id="titleOption"><input type="checkbox" id="showGutterTitle" checked> 中央タイトル</label><label class="check-control"><input type="checkbox" id="kinsoku"> 禁則処理</label></div>
   </div>
   <div class="tool-row"><button class="secondary" id="rubyAdd" title="選択した言葉にだけルビを付けます">＋ 選択語にルビ</button><button class="secondary" id="rubyRemove">ルビを外す</button><div class="mini-help" id="editHelp">原稿用紙は右上から縦に書くよ</div><button class="secondary" id="historyBtn">履歴</button><button class="secondary" id="exportBtn">書き出し ▾</button></div>
+  <div class="paper-controls" aria-label="原稿の表示倍率">
+    <span>原稿の表示倍率</span>
+    <button type="button" id="zoomOut" class="zoom-button" aria-label="原稿を縮小">－</button>
+    <input type="range" id="paperZoom" min="70" max="160" step="1" value="100" aria-label="原稿表示倍率">
+    <output id="zoomValue" for="paperZoom">100%</output>
+    <button type="button" id="zoomIn" class="zoom-button" aria-label="原稿を拡大">＋</button>
+    <button type="button" id="zoomReset" class="zoom-reset">等倍</button>
+  </div>
   <section id="paperViewport" class="paper-viewport" aria-label="執筆エリア">
     <div id="manuView" class="manu-pages"></div>
     <div id="bookView" class="book-view" hidden><div class="book-page"><div id="bookSurface" class="book-surface"><div id="bookEditor" class="book-editor" contenteditable="true" spellcheck="false" role="textbox" aria-label="作品本文" aria-multiline="true" data-placeholder="ここから物語を書き始めてね"></div></div></div></div>
   </section>
   <div class="under-editor"><span class="keyhint">⌘ / Ctrl + S でバックアップ保存</span><span id="viewNote">※ 文字の配置や改ページは試作段階です。印刷結果も確認してね。</span></div>
 </main>
+<div id="notesSplitter" class="panel-splitter" data-edge="notes" role="separator" tabindex="0" aria-label="メモ帳の幅を調整" aria-orientation="vertical" title="左右へドラッグして幅を変更（ダブルクリックで初期化）"><span>⋮</span></div>
 <aside class="notes-panel" id="notesPanel">
   <div class="notes-heading"><span class="kicker">NOTEBOOK</span><strong>メモ帳</strong></div>
   <div class="notes-tabs" role="group" aria-label="メモの種類"><button class="notes-tab active" data-note="work">作品メモ</button><button class="notes-tab" data-note="global">共通メモ</button></div>
@@ -278,7 +309,7 @@ const DEFAULT_TITLE='無題の作品';
 let db=null,works=new Map(),currentId=null,activeStyle='manu',noteMode='work';
 // A fresh device shows a temporary blank page until the user edits or imports a work.
 let transientStarterId=null;
-const nativeInPlace=/(iPhone|iPad|iPod)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+const nativeInPlace=true; // v0.4: PCでも端末版と同じ原稿用紙直入力＋固定マス表示方式にする
 const nativeComposing=new WeakSet(),nativePending=new WeakMap();
 const nativeImePreview=new WeakMap(); // iOS未確定文字の表示だけを保持。作品本文は確定後に更新
 let pieceTexts=[],halfEls=[],composing=false,imeFinalizing=false,imeOwner=null,imeEpoch=0,renderBusy=false,saveTimer=null,lastSavedAt=0,lastHistoryAt=new Map(),selectedRuby=null;
@@ -607,8 +638,9 @@ function tapCaretIndex(el,clientX,clientY){
  }
  const b=el.getBoundingClientRect(),css=getComputedStyle(document.documentElement);
  const cell=parseFloat(css.getPropertyValue('--cell'))||26,step=parseFloat(css.getPropertyValue('--step'))||30,pitch=step+(parseFloat(css.getPropertyValue('--rg'))||14);
- const col=Math.max(0,Math.floor((current()?.horizontal?clientY-b.top:b.right-clientX)/pitch));
- const row=Math.max(0,Math.round((current()?.horizontal?clientX-b.left:clientY-b.top)/cell));
+ const scale=paperViewScale();
+ const col=Math.max(0,Math.floor((current()?.horizontal?clientY-b.top:b.right-clientX)/(pitch*scale)));
+ const row=Math.max(0,Math.round((current()?.horizontal?clientX-b.left:clientY-b.top)/(cell*scale)));
  return displayIndex(layoutLines(el.value,20,!!current()?.kinsoku),col,row);
 }
 function setCaretFromTap(el,x,y){
@@ -695,7 +727,7 @@ function updateBookHandles(state,layout,rows,preview){
  };
  const a=rectAt(state.start),b=rectAt(state.end-1);
  if(!a||!b){hide();return}
- const put=(h,x,y)=>{h.style.left=(x-sr.left-14)+'px';h.style.top=(y-sr.top)+'px';h.classList.add('on')};
+ const put=(h,x,y)=>{const sc=paperViewScale();h.style.left=((x-sr.left)/sc-14)+'px';h.style.top=((y-sr.top)/sc)+'px';h.classList.add('on')};
  put(hs[0],a.left+a.width/2,a.top-28);
  put(hs[1],b.left+b.width/2,b.bottom+2);
 }
@@ -722,10 +754,10 @@ function syncBookPreview(){
  if(line){
   const lr=line.getBoundingClientRect();
   const glyphs=line.querySelectorAll(':scope > .editor-glyph');
-  if(row<glyphs.length)caretTop=glyphs[row].getBoundingClientRect().top-sr.top;
-  else if(glyphs.length)caretTop=glyphs[glyphs.length-1].getBoundingClientRect().bottom-sr.top;
-  else caretTop=lr.top-sr.top;
-  caretRight=sr.right-lr.right+(lr.width-caretWidth)/2;
+  if(row<glyphs.length)caretTop=(glyphs[row].getBoundingClientRect().top-sr.top)/paperViewScale();
+  else if(glyphs.length)caretTop=(glyphs[glyphs.length-1].getBoundingClientRect().bottom-sr.top)/paperViewScale();
+  else caretTop=(lr.top-sr.top)/paperViewScale();
+  caretRight=(sr.right-lr.right)/paperViewScale()+(lr.width/paperViewScale()-caretWidth)/2;
  }else{
   // 満行の次の列がまだ描画されていない場合のみ座標推定。
   const lineHeight=parseFloat(cs.lineHeight)||35;
@@ -1271,7 +1303,151 @@ $('exportBtn').addEventListener('click',()=>$('exportDialog').showModal());$('ba
 document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();exportBy('all')}});
 window.addEventListener('beforeunload',()=>{if(current())saveNow(currentId)});
 }
-async function init(){configure();try{db=await openDB();const rows=await txRead('works','getAll');for(const row of rows){const w=normalWork(row);works.set(w.id,w)}globalNote=(await txRead('settings','get','globalNote'))?.value||'';if(!works.size){const a=makeWork('はじめての物語');works.set(a.id,a);transientStarterId=a.id}let preferred;try{preferred=localStorage.getItem('kotonoha-current-id')}catch(e){}currentId=works.has(preferred)?preferred:[...works.keys()][0];renderAll();refreshWorkList();setState('この端末に保存済み');}catch(e){console.error(e);setState('端末保存を利用できません',true);$('safetyBanner').textContent='端末保存の初期化に失敗しました。ブラウザのプライベートモードを解除するなどして再度開いてね。';return}
+
+/* v0.5: Screen preferences stay on THIS device only, never cloud-sync. */
+let viewZoomPercent=100;
+function paperViewScale(){return viewZoomPercent/100}
+function clampZoom(value){const n=Number(value);return Number.isFinite(n)?Math.max(70,Math.min(160,Math.round(n))):100}
+function initViewControls(){
+ const layout=document.querySelector('.app-layout');
+ const zoom=$('paperZoom'),output=$('zoomValue');
+ const store=(key,val)=>{try{localStorage.setItem(key,String(val))}catch(_){}};
+ const restore=(key,defaultValue)=>{try{return localStorage.getItem(key)||defaultValue}catch(_){return defaultValue}};
+ const setZoom=(value,persist=true)=>{
+  viewZoomPercent=clampZoom(value);
+  document.documentElement.style.setProperty('--paper-zoom',String(paperViewScale()));
+  if(zoom)zoom.value=String(viewZoomPercent);
+  if(output)output.textContent=viewZoomPercent+'%';
+  if(persist)store('kotonoha-ui-paper-zoom',viewZoomPercent);
+ };
+ setZoom(restore('kotonoha-ui-paper-zoom',100));
+ zoom?.addEventListener('input',()=>setZoom(zoom.value));
+ $('zoomIn')?.addEventListener('click',()=>setZoom(viewZoomPercent+10));
+ $('zoomOut')?.addEventListener('click',()=>setZoom(viewZoomPercent-10));
+ $('zoomReset')?.addEventListener('click',()=>setZoom(100));
+ initPaperPinchZoom($('paperViewport'),setZoom);
+ const specs={library:{handle:'librarySplitter',css:'--library-width',key:'kotonoha-ui-library-width',defaultSize:218,min:145,max:400,sign:1},notes:{handle:'notesSplitter',css:'--notes-width',key:'kotonoha-ui-notes-width',defaultSize:247,min:185,max:460,sign:-1}};
+ const apply=(spec,value)=>{
+  const width=Math.round(Math.max(spec.min,Math.min(spec.max,value)));
+  layout.style.setProperty(spec.css,width+'px');
+  store(spec.key,width);
+  const handle=$(spec.handle);
+  handle?.setAttribute('aria-valuenow',String(width));
+  return width;
+ };
+ for(const spec of Object.values(specs)){
+  const handle=$(spec.handle);if(!handle)continue;
+  let width=apply(spec,Number(restore(spec.key,spec.defaultSize))||spec.defaultSize);
+  handle.setAttribute('aria-valuemin',String(spec.min));handle.setAttribute('aria-valuemax',String(spec.max));
+  let drag=null;
+  handle.addEventListener('pointerdown',e=>{
+   if(e.pointerType==='mouse'&&e.button!==0)return;
+   e.preventDefault();drag={x:e.clientX,width};handle.classList.add('dragging');
+   try{handle.setPointerCapture(e.pointerId)}catch(_){}
+  });
+  handle.addEventListener('pointermove',e=>{if(!drag)return; width=apply(spec,drag.width+spec.sign*(e.clientX-drag.x))});
+  const finish=()=>{drag=null;handle.classList.remove('dragging')};
+  handle.addEventListener('pointerup',finish);handle.addEventListener('pointercancel',finish);
+  handle.addEventListener('dblclick',()=>{width=apply(spec,spec.defaultSize)});
+  handle.addEventListener('keydown',e=>{
+   if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+    e.preventDefault();width=apply(spec,width+(e.key==='ArrowRight'?spec.sign*20:-spec.sign*20));
+   }else if(e.key==='Home'){e.preventDefault();width=apply(spec,spec.min)}
+   else if(e.key==='End'){e.preventDefault();width=apply(spec,spec.max)}
+  });
+ }
+}
+
+
+/* v0.5: iOS/Android two-finger pinch inside the manuscript only.
+   - Do not change the editable DOM or underlying text during a gesture.
+   - Do not cancel one-finger touches, so scrolling and Japanese IME still work.
+   - Prevent Safari's browser-page pinch only while touching the manuscript area.
+   - Keep the point under the fingers near the same on-screen position. */
+function initPaperPinchZoom(view,setZoom){
+ if(!view)return;
+ let pinch=null,blockClicksUntil=0,nativeGestureZoom=null;
+ const distance=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+ const midpoint=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
+ const visiblePaper=()=>!$('manuView').hidden?$('manuView'):$('bookView');
+ const begin=(event)=>{
+  if(event.touches.length!==2)return;
+  const a=event.touches[0],b=event.touches[1],d=distance(a,b);
+  if(d<12)return;
+  pinch={startDistance:d,startZoom:viewZoomPercent,center:midpoint(a,b)};
+  blockClicksUntil=Date.now()+550;
+  if(event.cancelable)event.preventDefault();
+  event.stopPropagation();
+ };
+ view.addEventListener('touchstart',e=>{
+  if(e.touches.length===2&&!pinch)begin(e);
+  else if(pinch&&e.touches.length>=2){if(e.cancelable)e.preventDefault();e.stopPropagation()}
+ },{passive:false,capture:true});
+ view.addEventListener('touchmove',e=>{
+  if(!pinch){if(e.touches.length===2)begin(e);return}
+  if(e.touches.length<2)return;
+  if(e.cancelable)e.preventDefault();
+  e.stopPropagation();
+  const a=e.touches[0],b=e.touches[1];
+  const d=distance(a,b),center=midpoint(a,b);
+  const next=clampZoom(pinch.startZoom*d/pinch.startDistance);
+  const previousScale=paperViewScale(),nextScale=next/100;
+  const paper=visiblePaper();
+  const before=paper?.getBoundingClientRect();
+  // The previous midpoint is our anchor, so moving two fingers also pans the sheet.
+  const localX=before?(pinch.center.x-before.left)/previousScale:0;
+  const localY=before?(pinch.center.y-before.top)/previousScale:0;
+  if(next!==viewZoomPercent){
+   setZoom(next,false);
+   if(before){
+    const after=paper.getBoundingClientRect();
+    view.scrollLeft+=(after.left+localX*nextScale)-center.x;
+    view.scrollTop+=(after.top+localY*nextScale)-center.y;
+   }
+  }else{
+   view.scrollLeft+=pinch.center.x-center.x;
+   view.scrollTop+=pinch.center.y-center.y;
+  }
+  pinch.center=center;
+  blockClicksUntil=Date.now()+550;
+ },{passive:false,capture:true});
+ const finish=e=>{
+  if(!pinch)return;
+  if(e.cancelable)e.preventDefault();
+  e.stopPropagation();
+  if(e.touches.length<2){
+   pinch=null;
+   blockClicksUntil=Date.now()+550;
+   setZoom(viewZoomPercent); // Persist only at gesture end.
+  }
+ };
+ view.addEventListener('touchend',finish,{passive:false,capture:true});
+ view.addEventListener('touchcancel',finish,{passive:false,capture:true});
+ // iOS Safari may dispatch proprietary gesture events even when TouchEvents are handled.
+ view.addEventListener('gesturestart',e=>{
+  if(e.cancelable)e.preventDefault();
+  e.stopPropagation();
+  nativeGestureZoom=viewZoomPercent;
+ },{passive:false,capture:true});
+ view.addEventListener('gesturechange',e=>{
+  if(e.cancelable)e.preventDefault();
+  e.stopPropagation();
+  if(!pinch&&nativeGestureZoom!==null)setZoom(nativeGestureZoom*Number(e.scale||1),false);
+ },{passive:false,capture:true});
+ view.addEventListener('gestureend',e=>{
+  if(e.cancelable)e.preventDefault();
+  e.stopPropagation();
+  nativeGestureZoom=null;
+  blockClicksUntil=Date.now()+550;
+  setZoom(viewZoomPercent);
+ },{passive:false,capture:true});
+ // Block accidental tap-to-edit immediately following a pinch.
+ view.addEventListener('click',e=>{
+  if(pinch||Date.now()<blockClicksUntil){e.preventDefault();e.stopImmediatePropagation()}
+ },true);
+}
+
+async function init(){configure();initViewControls();try{db=await openDB();const rows=await txRead('works','getAll');for(const row of rows){const w=normalWork(row);works.set(w.id,w)}globalNote=(await txRead('settings','get','globalNote'))?.value||'';if(!works.size){const a=makeWork('はじめての物語');works.set(a.id,a);transientStarterId=a.id}let preferred;try{preferred=localStorage.getItem('kotonoha-current-id')}catch(e){}currentId=works.has(preferred)?preferred:[...works.keys()][0];renderAll();refreshWorkList();setState('この端末に保存済み');}catch(e){console.error(e);setState('端末保存を利用できません',true);$('safetyBanner').textContent='端末保存の初期化に失敗しました。ブラウザのプライベートモードを解除するなどして再度開いてね。';return}
 if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')){navigator.serviceWorker?.register('./sw.js').catch(e=>console.warn('serviceworker',e))}
 }
 /* 入力後にキーボードを閉じやすくする: ①余白をタップ ②タイトルでEnter */
