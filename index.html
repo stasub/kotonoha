@@ -139,6 +139,8 @@
  font-size:16px!important;line-height:16px!important;letter-spacing:0!important;
  opacity:0!important;clip-path:inset(50%)!important;
  pointer-events:none!important;overflow:hidden!important;z-index:0!important;
+ /* Focus must be eligible to bring up the software keyboard on Safari. */
+ clip-path:none!important;opacity:.02!important;
 }
 .book-preview{z-index:3;pointer-events:auto!important;touch-action:pan-x pan-y;
  user-select:none;-webkit-user-select:none;cursor:text}
@@ -203,7 +205,10 @@
 .paper-controls #paperZoom{width:124px;max-width:25vw;accent-color:var(--accent);cursor:pointer}
 .paper-controls output{min-width:43px;text-align:center;color:var(--text);font-variant-numeric:tabular-nums}
 .paper-controls .zoom-reset{font-size:11px}
-.manu-pages,.book-view{zoom:var(--paper-zoom)}
+/* v0.6: The editable manuscript must NOT use CSS zoom on iOS.
+   Its native textarea selection hit-testing gets out of sync with painted glyphs.
+   Scale manuscript geometry (cells, lines, ruby gap, gutter) instead. */
+.book-view{zoom:var(--paper-zoom)}
 /* Two-finger gesture is handled only inside the page viewport. Single-touch scrolling stays native. */
 @media (pointer:coarse){.paper-viewport{touch-action:pan-x pan-y}}
 .panel-splitter{display:none}
@@ -215,13 +220,20 @@
  .sidebar{grid-column:1}.main-panel{grid-column:3}.notes-panel{grid-column:5}
 }
 @media(max-width:700px){.paper-controls{justify-content:flex-start}.paper-controls #paperZoom{width:95px}}
-@media print{.manu-pages,.book-view{zoom:1!important}.paper-controls,.panel-splitter{display:none!important}}
+@media print{:root{--cell:26px!important;--step:30px!important;--rg:12px!important;--gutter:43px!important}.book-view{zoom:1!important}.paper-controls,.panel-splitter{display:none!important}}
+/* Book selection uses a native 1px IME input. On iOS long-press timers do not
+   give keyboard permission, so a *real button tap* offers an explicit route to edit. */
+#bookSelectionEdit{position:fixed;z-index:120;bottom:calc(18px + env(safe-area-inset-bottom));
+ left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;
+ border:1px solid var(--accent);border-radius:999px;padding:10px 16px;
+ box-shadow:0 4px 20px #0003;white-space:nowrap}
+@media print{#bookSelectionEdit{display:none!important}}
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">二本指ズーム対応 v0.5</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">文字選択・ズーム調整 v0.6</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -269,6 +281,7 @@
 <dialog id="rubyDialog"><form method="dialog" id="rubyForm" class="dialog-body"><h2>ルビを付ける</h2><p><strong id="rubyBaseText">選択語</strong> にだけ読みを付けるよ</p><label for="rubyTarget">ルビを付ける言葉（選択できない場合は入力）</label><input id="rubyTarget" maxlength="100" placeholder="例：蜃気楼" required><label for="rubyOccurrence" id="rubyOccurrenceLabel" hidden>どの箇所に付ける？</label><select id="rubyOccurrence" hidden></select><label for="rubyReading">読みがな</label><input id="rubyReading" maxlength="80" placeholder="例：しんきろう" required><div class="dialog-footer"><button value="cancel" formnovalidate class="secondary">キャンセル</button><button id="rubySubmit" type="submit" value="ok" class="primary">追加する</button></div></form></dialog>
 <dialog id="historyDialog"><div class="dialog-body"><h2>端末内の復元履歴</h2><p>復元すると現在の文章は変更されるので、念のためバックアップも取ってね。</p><div id="historyList" class="history-list"></div><button id="closeHistory" class="secondary">閉じる</button></div></dialog>
 <input type="file" id="importFile" accept=".json,application/json" hidden>
+<button id="bookSelectionEdit" type="button" hidden>⌨ 選択した言葉を編集</button>
 <div id="toast" role="status" aria-live="polite"></div>
 <dialog id="cloudDialog" aria-labelledby="cloudDialogTitle">
  <div class="dialog-body">
@@ -638,7 +651,8 @@ function tapCaretIndex(el,clientX,clientY){
  }
  const b=el.getBoundingClientRect(),css=getComputedStyle(document.documentElement);
  const cell=parseFloat(css.getPropertyValue('--cell'))||26,step=parseFloat(css.getPropertyValue('--step'))||30,pitch=step+(parseFloat(css.getPropertyValue('--rg'))||14);
- const scale=paperViewScale();
+ /* Manuscript coordinates are now actual, zoomed CSS pixels (not CSS zoom). */
+ const scale=1;
  const col=Math.max(0,Math.floor((current()?.horizontal?clientY-b.top:b.right-clientX)/(pitch*scale)));
  const row=Math.max(0,Math.round((current()?.horizontal?clientX-b.left:clientY-b.top)/(cell*scale)));
  return displayIndex(layoutLines(el.value,20,!!current()?.kinsoku),col,row);
@@ -742,6 +756,8 @@ function syncBookPreview(){
  preview.style.height=(activeStyle==='bunko'?570:490)+'px';
  alignRubyFloats(preview);
  updateBookHandles(state,layout,rows,preview);
+ const editAction=$('bookSelectionEdit');
+ if(editAction)editAction.hidden=(activeStyle==='manu'||!state.focused||state.start===state.end||nativeComposing.has(book));
  const caret=$('bookCaret');if(!caret)return;
  const {col,row}=displayPoint(layout,state.caretEnd,rows);
  if(!state.focused||(state.start!==state.end&&!state.ime)){
@@ -779,7 +795,7 @@ function revealBookStart(){
  const view=$('paperViewport');
  requestAnimationFrame(()=>{view.scrollLeft=Math.max(0,view.scrollWidth-view.clientWidth)});
 }
-function renderSettings(){const w=current();$('workTitle').value=w.title;$('horizontal').checked=w.horizontal;$('showGutterTitle').checked=w.showTitle;$('kinsoku').checked=w.kinsoku;$('manuView').hidden=activeStyle!=='manu';$('bookView').hidden=activeStyle==='manu';$('horizontalOption').hidden=activeStyle!=='manu';$('titleOption').hidden=activeStyle!=='manu';document.body.classList.toggle('kinsoku-on',w.kinsoku);$('bookView').className='book-view '+(activeStyle==='bunko'?'bunko':'tank');document.querySelectorAll('.mode').forEach(e=>e.classList.toggle('active',e.dataset.style===activeStyle));$('editHelp').textContent=activeStyle==='manu'?'原稿用紙のマス目に直接入力（組版は試作段階）':activeStyle==='tank'?'単行本風の縦書き編集（長押しで語句選択）':'文庫本風の縦書き編集（長押しで語句選択）';$('noteText').value=noteMode==='work'?w.note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア';updateStats();renderRubyList()}
+function renderSettings(){const w=current();$('workTitle').value=w.title;$('horizontal').checked=w.horizontal;$('showGutterTitle').checked=w.showTitle;$('kinsoku').checked=w.kinsoku;$('manuView').hidden=activeStyle!=='manu';$('bookView').hidden=activeStyle==='manu';$('horizontalOption').hidden=activeStyle!=='manu';$('titleOption').hidden=activeStyle!=='manu';document.body.classList.toggle('kinsoku-on',w.kinsoku);$('bookView').className='book-view '+(activeStyle==='bunko'?'bunko':'tank');document.querySelectorAll('.mode').forEach(e=>e.classList.toggle('active',e.dataset.style===activeStyle));$('bookSelectionEdit').hidden=true;$('editHelp').textContent=activeStyle==='manu'?'原稿用紙のマス目に直接入力（組版は試作段階）':activeStyle==='tank'?'単行本風の縦書き編集（長押しで語句選択）':'文庫本風の縦書き編集（長押しで語句選択）';$('noteText').value=noteMode==='work'?w.note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア';updateStats();renderRubyList()}
 function renderAll(caret=null){if(!current())return;renderBusy=true;renderSettings();if(activeStyle==='manu')renderM(caret);else renderBook(caret);renderBusy=false}
 function selectedTextInfo(){
  const off=getSelectionOffsets(),w=current();if(!w)return null;
@@ -1179,6 +1195,16 @@ if(nativeInPlace){
   t.id='bookEditor';t.className='book-editor';t.spellcheck=false;t.wrap='soft';
   t.autocorrect='off';t.autocapitalize='off';t.autocomplete='off';
   t.setAttribute('aria-label','作品本文');prev.replaceWith(t);const preview=document.createElement('div');preview.id='bookPreview';preview.className='book-preview';preview.setAttribute('aria-hidden','true');$('bookSurface').append(preview);const cursor=document.createElement('span');cursor.id='bookCaret';cursor.className='book-caret';cursor.setAttribute('aria-hidden','true');$('bookSurface').append(cursor);wireNative(t);
+  // The book overlay can select words without a keyboard on iOS. A trusted
+  // tap on this button re-activates the IME while preserving the selected range.
+  $('bookSelectionEdit').addEventListener('click',()=>{
+   const st=t.selectionStart,en=t.selectionEnd;
+   if(activeStyle==='manu'||st===en)return;
+   t.blur();
+   try{t.focus({preventScroll:true});t.setSelectionRange(st,en)}catch(e){}
+   rememberNativeRange(t);syncBookPreview();
+   $('bookSelectionEdit').hidden=true;
+  });
   // 見えている本文からタップ位置を取得して入力窓へ転送する。
   // focus は iOS のユーザー操作イベント内で同期的に呼ぶ。
   let bookPress=null,ignoreBookClick=false,lastBookTap=null,lastSel=null;
@@ -1229,7 +1255,12 @@ if(nativeInPlace){
   preview.addEventListener('pointerup',e=>{
    const rec=bookPress;endPress();
    if(e.pointerType!=='touch'&&e.pointerType!=='pen')return;
-   if(lastSel){keepSel();return}
+   if(lastSel){
+    /* A long-press timer alone cannot open iOS's keyboard; the finger lift
+       is the next trusted event. Do not alter the selected range. */
+    try{t.blur();t.focus({preventScroll:true});t.setSelectionRange(lastSel.start,lastSel.end)}catch(_){}
+    keepSel();return;
+   }
    if(!rec||rec.id!==e.pointerId||activeStyle==='manu')return;
    const now=performance.now();
    if(lastBookTap&&now-lastBookTap.time<450&&Math.hypot(e.clientX-lastBookTap.x,e.clientY-lastBookTap.y)<40){
@@ -1316,6 +1347,16 @@ function initViewControls(){
  const setZoom=(value,persist=true)=>{
   viewZoomPercent=clampZoom(value);
   document.documentElement.style.setProperty('--paper-zoom',String(paperViewScale()));
+  /* Reflow the real input and visual grid at the same physical CSS pixel size.
+     This avoids native Safari hit-testing / selected text lagging behind zoom. */
+  const s=paperViewScale(),root=document.documentElement.style;
+  root.setProperty('--cell',`${26*s}px`);
+  root.setProperty('--step',`${30*s}px`);
+  root.setProperty('--rg',`${12*s}px`);
+  root.setProperty('--gutter',`${43*s}px`);
+  if(typeof activeStyle!=='undefined'&&activeStyle==='manu'&&!nativeComposing.size){
+   requestAnimationFrame(()=>{for(const half of halfEls)syncNativeVisual(half)});
+  }
   if(zoom)zoom.value=String(viewZoomPercent);
   if(output)output.textContent=viewZoomPercent+'%';
   if(persist)store('kotonoha-ui-paper-zoom',viewZoomPercent);
