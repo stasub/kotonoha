@@ -221,19 +221,16 @@
 }
 @media(max-width:700px){.paper-controls{justify-content:flex-start}.paper-controls #paperZoom{width:95px}}
 @media print{:root{--cell:26px!important;--step:30px!important;--rg:12px!important;--gutter:43px!important}.book-view{zoom:1!important}.paper-controls,.panel-splitter{display:none!important}}
-/* Book selection uses a native 1px IME input. On iOS long-press timers do not
-   give keyboard permission, so a *real button tap* offers an explicit route to edit. */
-#bookSelectionEdit{position:fixed;z-index:120;bottom:calc(18px + env(safe-area-inset-bottom));
- left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;
- border:1px solid var(--accent);border-radius:999px;padding:10px 16px;
- box-shadow:0 4px 20px #0003;white-space:nowrap}
-@media print{#bookSelectionEdit{display:none!important}}
+/* v0.8 — body undo/redo buttons are separate from the native editor controls. */
+.editor-undo{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+.editor-undo button{font-variant-numeric:tabular-nums}
+@media print{.editor-undo{display:none!important}}
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">書籍の削除・選択安定化 v0.7</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">取り消し・やり直し v0.8</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -253,7 +250,7 @@
     <div class="tab-group" role="group" aria-label="表示スタイル"><button class="mode active" data-style="manu">原稿用紙</button><button class="mode" data-style="tank">単行本</button><button class="mode" data-style="bunko">文庫本</button></div>
     <div class="tools-right"><label class="check-control" id="horizontalOption"><input type="checkbox" id="horizontal"> 横書き</label><label class="check-control" id="titleOption"><input type="checkbox" id="showGutterTitle" checked> 中央タイトル</label><label class="check-control"><input type="checkbox" id="kinsoku"> 禁則処理</label></div>
   </div>
-  <div class="tool-row"><button class="secondary" id="rubyAdd" title="選択した言葉にだけルビを付けます">＋ 選択語にルビ</button><button class="secondary" id="rubyRemove">ルビを外す</button><div class="mini-help" id="editHelp">原稿用紙は右上から縦に書くよ</div><button class="secondary" id="historyBtn">履歴</button><button class="secondary" id="exportBtn">書き出し ▾</button></div>
+  <div class="tool-row"><button class="secondary" id="rubyAdd" title="選択した言葉にだけルビを付けます">＋ 選択語にルビ</button><button class="secondary" id="rubyRemove">ルビを外す</button><div class="mini-help" id="editHelp">原稿用紙は右上から縦に書くよ</div><div class="editor-undo" role="group" aria-label="本文の取り消しとやり直し"><button class="secondary" type="button" id="undoBody" title="本文を取り消す（⌘Z / Ctrl+Z）" disabled>↶ 取り消す</button><button class="secondary" type="button" id="redoBody" title="本文をやり直す（Shift+⌘Z / Ctrl+Y）" disabled>↷ やり直す</button></div><button class="secondary" id="historyBtn">履歴</button><button class="secondary" id="exportBtn">書き出し ▾</button></div>
   <div class="paper-controls" aria-label="原稿の表示倍率">
     <span>原稿の表示倍率</span>
     <button type="button" id="zoomOut" class="zoom-button" aria-label="原稿を縮小">－</button>
@@ -281,7 +278,6 @@
 <dialog id="rubyDialog"><form method="dialog" id="rubyForm" class="dialog-body"><h2>ルビを付ける</h2><p><strong id="rubyBaseText">選択語</strong> にだけ読みを付けるよ</p><label for="rubyTarget">ルビを付ける言葉（選択できない場合は入力）</label><input id="rubyTarget" maxlength="100" placeholder="例：蜃気楼" required><label for="rubyOccurrence" id="rubyOccurrenceLabel" hidden>どの箇所に付ける？</label><select id="rubyOccurrence" hidden></select><label for="rubyReading">読みがな</label><input id="rubyReading" maxlength="80" placeholder="例：しんきろう" required><div class="dialog-footer"><button value="cancel" formnovalidate class="secondary">キャンセル</button><button id="rubySubmit" type="submit" value="ok" class="primary">追加する</button></div></form></dialog>
 <dialog id="historyDialog"><div class="dialog-body"><h2>端末内の復元履歴</h2><p>復元すると現在の文章は変更されるので、念のためバックアップも取ってね。</p><div id="historyList" class="history-list"></div><button id="closeHistory" class="secondary">閉じる</button></div></dialog>
 <input type="file" id="importFile" accept=".json,application/json" hidden>
-<button id="bookSelectionEdit" type="button" hidden>⌨ 選択した言葉を編集</button>
 <div id="toast" role="status" aria-live="polite"></div>
 <dialog id="cloudDialog" aria-labelledby="cloudDialogTitle">
  <div class="dialog-body">
@@ -361,7 +357,58 @@ function updateStats(){const w=current();if(!w)return;const cnt=charLength(w.tex
 function refreshWorkList(){const root=$('workList');root.replaceChildren();const all=[...works.values()].sort((a,b)=>b.updated-a.updated);for(const w of all){const b=document.createElement('button');b.type='button';b.className='work-card'+(w.id===currentId?' active':'');b.dataset.id=w.id;const ttl=document.createElement('span');ttl.className='work-card-title';ttl.textContent=w.title||DEFAULT_TITLE;const cap=document.createElement('span');cap.className='work-card-caption';cap.textContent=charLength(w.text).toLocaleString('ja-JP')+'字 ・ '+jpDate(w.updated);b.append(ttl,cap);b.addEventListener('click',()=>selectWork(w.id));root.append(b)}}
 function scheduleSave(){setState('端末に保存中…');clearTimeout(saveTimer);const id=currentId;saveTimer=setTimeout(()=>saveNow(id),450)}
 async function saveNow(id=currentId){if(!db||!works.has(id))return;if(isUnusedStarter(id))return;if(id===transientStarterId)transientStarterId=null;const data=structuredClone(works.get(id));try{await txWrite('works','put',data);lastSavedAt=Date.now();setState('この端末に保存済み');window.dispatchEvent(new CustomEvent('kotonoha:worksaved',{detail:{id}}));}catch(e){setState('保存できません！',true);say('保存に失敗。必ず書き出しで原稿を確保してね')}}
-function change(){const w=current();if(!w)return;rememberedNativeSelection=null;w.updated=Date.now();updateStats();scheduleSave();checkpoint(w).catch(()=>{});}
+/* v0.8: 本文＋ルビの直前編集だけを端末のメモリに保持する。
+   ブラウザの textarea 履歴はページ分割やスタイル切替で消えるため、作品モデルを正とする。
+   この履歴は同期しない／再読み込み後は空。端末の復元履歴とは別。 */
+const bodyUndoHistory=new Map(), BODY_UNDO_LIMIT=45;
+function bodyState(w){return {text:w.text,rubies:w.rubies.map(r=>({...r}))}}
+function bodyStateEqual(a,b){return !!a&&a.text===b.text&&JSON.stringify(a.rubies)===JSON.stringify(b.rubies)}
+function ensureBodyHistory(w){
+ if(!w)return null;
+ let j=bodyUndoHistory.get(w.id);
+ if(!j){j={present:bodyState(w),undo:[],redo:[],time:0,kind:'',lastStart:0,lastEnd:0};bodyUndoHistory.set(w.id,j)}
+ return j;
+}
+function resetBodyHistory(w){if(!w)return;bodyUndoHistory.set(w.id,{present:bodyState(w),undo:[],redo:[],time:0,kind:'',lastStart:0,lastEnd:0});updateBodyUndoButtons()}
+function updateBodyUndoButtons(){
+ const j=bodyUndoHistory.get(currentId);
+ const u=document.getElementById('undoBody'),r=document.getElementById('redoBody');
+ if(u)u.disabled=!j?.undo.length;
+ if(r)r.disabled=!j?.redo.length;
+}
+function trackBodyChange(w){
+ const j=ensureBodyHistory(w),next=bodyState(w);
+ if(bodyStateEqual(j.present,next))return;
+ const d=calculateDiff(j.present.text,next.text),now=Date.now();
+ const kind=bodyStateEqual({text:j.present.text,rubies:j.present.rubies},{text:next.text,rubies:next.rubies})?'none':
+  d.oldLen===0&&d.newLen>0?'insert':d.oldLen>0&&d.newLen===0?'delete':'replace';
+ // Rapid consecutive typing and delete-key repeats are one undo step.
+ const adjacentInsert=kind==='insert'&&j.kind==='insert'&&d.start===j.lastEnd;
+ const adjacentBackspace=kind==='delete'&&j.kind==='delete'&&d.start+d.oldLen===j.lastStart;
+ const adjacentForwardDelete=kind==='delete'&&j.kind==='delete'&&d.start===j.lastStart;
+ const merge=now-j.time<650&&!j.redo.length&&
+    (adjacentInsert||adjacentBackspace||adjacentForwardDelete)&&
+    !next.text.slice(d.start,d.start+d.newLen).includes('\n');
+ if(!merge){j.undo.push(j.present);if(j.undo.length>BODY_UNDO_LIMIT)j.undo.shift()}
+ j.redo=[];j.present=next;j.kind=kind;j.time=now;j.lastStart=d.start;j.lastEnd=d.start+d.newLen;
+ updateBodyUndoButtons();
+}
+function bodyUndoOrRedo(redo=false){
+ const w=current();if(!w)return;
+ if(composing||imeFinalizing||[...halfEls,$('bookEditor')].some(el=>el&&(nativeComposing.has(el)||nativePending.has(el)))){
+  say('日本語の変換が確定してから操作してね');return;
+ }
+ const j=ensureBodyHistory(w),from=redo?j.redo:j.undo,to=redo?j.undo:j.redo;
+ if(!from.length){say(redo?'やり直せる編集はないよ':'取り消せる編集はないよ');return}
+ const now=bodyState(w),next=from.pop();to.push(now);if(to.length>BODY_UNDO_LIMIT)to.shift();
+ j.present=next;j.time=0;j.kind='';j.lastStart=0;j.lastEnd=0;
+ // The position where the restored text differs is the safest place to put the caret.
+ const d=calculateDiff(now.text,next.text),caret=Math.min(next.text.length,d.start+d.newLen);
+ w.text=next.text;w.rubies=next.rubies.map(r=>({...r}));
+ change();renderAll(caret);refreshWorkList();updateBodyUndoButtons();
+ say(redo?'本文をやり直したよ':'本文を取り消したよ');
+}
+function change(){const w=current();if(!w)return;trackBodyChange(w);rememberedNativeSelection=null;w.updated=Date.now();updateStats();scheduleSave();checkpoint(w).catch(()=>{});}
 async function checkpoint(w){if(!db||!w||(!w.text&&!w.note))return;const now=Date.now();if(now-(lastHistoryAt.get(w.id)||0)<60000)return;lastHistoryAt.set(w.id,now);try{const snapshots=await txRead('history','getAll');for(const x of snapshots.filter(x=>x.workId===w.id).sort((a,b)=>b.time-a.time).slice(HISTORY_LIMIT-1))await txWrite('history','delete',x.id);await txWrite('history','put',{id:uuid(),workId:w.id,time:now,title:w.title,text:w.text,rubies:structuredClone(w.rubies),note:w.note});}catch(e){console.warn('history',e)}}
 function extractContent(root){
  if(root.nodeType===Node.ELEMENT_NODE&&root.classList.contains('editor-line')&&root.childNodes.length===1&&root.firstChild.nodeType===Node.ELEMENT_NODE&&root.firstChild.tagName==='BR')return {text:'',rubies:[]};
@@ -756,8 +803,6 @@ function syncBookPreview(){
  preview.style.height=(activeStyle==='bunko'?570:490)+'px';
  alignRubyFloats(preview);
  updateBookHandles(state,layout,rows,preview);
- const editAction=$('bookSelectionEdit');
- if(editAction)editAction.hidden=(activeStyle==='manu'||!state.focused||state.start===state.end||nativeComposing.has(book));
  const caret=$('bookCaret');if(!caret)return;
  const {col,row}=displayPoint(layout,state.caretEnd,rows);
  if(!state.focused||(state.start!==state.end&&!state.ime)){
@@ -795,8 +840,8 @@ function revealBookStart(){
  const view=$('paperViewport');
  requestAnimationFrame(()=>{view.scrollLeft=Math.max(0,view.scrollWidth-view.clientWidth)});
 }
-function renderSettings(){const w=current();$('workTitle').value=w.title;$('horizontal').checked=w.horizontal;$('showGutterTitle').checked=w.showTitle;$('kinsoku').checked=w.kinsoku;$('manuView').hidden=activeStyle!=='manu';$('bookView').hidden=activeStyle==='manu';$('horizontalOption').hidden=activeStyle!=='manu';$('titleOption').hidden=activeStyle!=='manu';document.body.classList.toggle('kinsoku-on',w.kinsoku);$('bookView').className='book-view '+(activeStyle==='bunko'?'bunko':'tank');document.querySelectorAll('.mode').forEach(e=>e.classList.toggle('active',e.dataset.style===activeStyle));$('bookSelectionEdit').hidden=true;$('editHelp').textContent=activeStyle==='manu'?'原稿用紙のマス目に直接入力（組版は試作段階）':activeStyle==='tank'?'単行本風の縦書き編集（長押しで語句選択）':'文庫本風の縦書き編集（長押しで語句選択）';$('noteText').value=noteMode==='work'?w.note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア';updateStats();renderRubyList()}
-function renderAll(caret=null){if(!current())return;renderBusy=true;renderSettings();if(activeStyle==='manu')renderM(caret);else renderBook(caret);renderBusy=false}
+function renderSettings(){const w=current();$('workTitle').value=w.title;$('horizontal').checked=w.horizontal;$('showGutterTitle').checked=w.showTitle;$('kinsoku').checked=w.kinsoku;$('manuView').hidden=activeStyle!=='manu';$('bookView').hidden=activeStyle==='manu';$('horizontalOption').hidden=activeStyle!=='manu';$('titleOption').hidden=activeStyle!=='manu';document.body.classList.toggle('kinsoku-on',w.kinsoku);$('bookView').className='book-view '+(activeStyle==='bunko'?'bunko':'tank');document.querySelectorAll('.mode').forEach(e=>e.classList.toggle('active',e.dataset.style===activeStyle));$('editHelp').textContent=activeStyle==='manu'?'原稿用紙のマス目に直接入力（組版は試作段階）':activeStyle==='tank'?'単行本風の縦書き編集（長押しで語句選択）':'文庫本風の縦書き編集（長押しで語句選択）';$('noteText').value=noteMode==='work'?w.note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア';updateStats();renderRubyList()}
+function renderAll(caret=null){if(!current())return;renderBusy=true;renderSettings();if(activeStyle==='manu')renderM(caret);else renderBook(caret);renderBusy=false;ensureBodyHistory(current());updateBodyUndoButtons()}
 function selectedTextInfo(){
  const off=getSelectionOffsets(),w=current();if(!w)return null;
  if(off&&off.start!==off.end){const text=w.text.slice(off.start,off.end);if(text)return{text,start:off.start,end:off.end}}
@@ -900,6 +945,7 @@ function finishIME(el){
 }
 function wireEditor(el){
   el.addEventListener('beforeinput',e=>{
+    if(e.inputType==='historyUndo'||e.inputType==='historyRedo'){e.preventDefault();bodyUndoOrRedo(e.inputType==='historyRedo');return}
     // Chromeなどでは変換中のBackspaceがisComposing:falseで届く場合がある。
     // グローバルなIME状態とinputTypeで判定し、変換中は絶対にモデル削除しない。
     if(e.inputType==='insertCompositionText'||e.inputType==='deleteCompositionText'){
@@ -1146,6 +1192,9 @@ function wireNative(el){
    nativeChangeFrom(el);
  });
  el.addEventListener('beforeinput',e=>{
+   if(e.inputType==='historyUndo'||e.inputType==='historyRedo'){
+    e.preventDefault();if(!nativeComposing.has(el))bodyUndoOrRedo(e.inputType==='historyRedo');return;
+   }
    if(nativeComposing.has(el)&&!e.isComposing&&/^(insertText|insertFromPaste|insertLineBreak|insertParagraph|deleteContentBackward|deleteContentForward)$/.test(e.inputType||''))nativeComposing.delete(el);
    if(nativeComposing.has(el)||e.isComposing){
     const ime=nativeImePreview.get(el);
@@ -1195,16 +1244,6 @@ if(nativeInPlace){
   t.id='bookEditor';t.className='book-editor';t.spellcheck=false;t.wrap='soft';
   t.autocorrect='off';t.autocapitalize='off';t.autocomplete='off';
   t.setAttribute('aria-label','作品本文');prev.replaceWith(t);const preview=document.createElement('div');preview.id='bookPreview';preview.className='book-preview';preview.setAttribute('aria-hidden','true');$('bookSurface').append(preview);const cursor=document.createElement('span');cursor.id='bookCaret';cursor.className='book-caret';cursor.setAttribute('aria-hidden','true');$('bookSurface').append(cursor);wireNative(t);
-  // The book overlay can select words without a keyboard on iOS. A trusted
-  // tap on this button re-activates the IME while preserving the selected range.
-  $('bookSelectionEdit').addEventListener('click',()=>{
-   const st=t.selectionStart,en=t.selectionEnd;
-   if(activeStyle==='manu'||st===en)return;
-   t.blur();
-   try{t.focus({preventScroll:true});t.setSelectionRange(st,en)}catch(e){}
-   rememberNativeRange(t);syncBookPreview();
-   $('bookSelectionEdit').hidden=true;
-  });
   // 見えている本文からタップ位置を取得して入力窓へ転送する。
   // focus は iOS のユーザー操作イベント内で同期的に呼ぶ。
   let bookPress=null,ignoreBookClick=false,lastBookTap=null,lastSel=null;
@@ -1353,8 +1392,21 @@ $('rubyRemove').addEventListener('click',()=>{
  if(before===w.rubies.length){say('その範囲にはルビがないよ');return}
  change();renderAll();say('選択範囲のルビを外したよ');
 });
-$('exportBtn').addEventListener('click',()=>$('exportDialog').showModal());$('backupTop').addEventListener('click',()=>exportBy('all'));document.querySelectorAll('[data-export]').forEach(e=>e.addEventListener('click',()=>exportBy(e.dataset.export)));$('importBtn').addEventListener('click',()=>$('importFile').click());$('importFile').addEventListener('change',async(e)=>{if(e.target.files?.[0])await importBackup(e.target.files[0]);e.target.value=''});$('deleteWork').addEventListener('click',async()=>{const w=current();if(!w||!confirm('「'+w.title+'」をこの端末から削除する？ この操作は取り消せません。\n先にバックアップを取るのがおすすめ。'))return;if(window.KotonohaCloud?.active?.()){const allowed=await window.KotonohaCloud.beforeDelete(w.id);if(!allowed){say('クラウドの状態を確認できないため削除しなかったよ');return}}clearTimeout(saveTimer);await txWrite('works','delete',w.id);works.delete(w.id);if(!works.size){const fresh=makeWork('はじめての物語');works.set(fresh.id,fresh);transientStarterId=fresh.id}currentId=works.keys().next().value;renderAll();refreshWorkList();$('exportDialog').close();say('作品を削除したよ')});$('historyBtn').addEventListener('click',showHistory);$('closeHistory').addEventListener('click',()=>$('historyDialog').close());$('noticeClose').addEventListener('click',()=>$('safetyBanner').remove());
-document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();exportBy('all')}});
+$('undoBody').addEventListener('click',()=>bodyUndoOrRedo(false));$('redoBody').addEventListener('click',()=>bodyUndoOrRedo(true));
+$('exportBtn').addEventListener('click',()=>$('exportDialog').showModal());$('backupTop').addEventListener('click',()=>exportBy('all'));document.querySelectorAll('[data-export]').forEach(e=>e.addEventListener('click',()=>exportBy(e.dataset.export)));$('importBtn').addEventListener('click',()=>$('importFile').click());$('importFile').addEventListener('change',async(e)=>{if(e.target.files?.[0])await importBackup(e.target.files[0]);e.target.value=''});$('deleteWork').addEventListener('click',async()=>{const w=current();if(!w||!confirm('「'+w.title+'」をこの端末から削除する？ この操作は取り消せません。\n先にバックアップを取るのがおすすめ。'))return;if(window.KotonohaCloud?.active?.()){const allowed=await window.KotonohaCloud.beforeDelete(w.id);if(!allowed){say('クラウドの状態を確認できないため削除しなかったよ');return}}clearTimeout(saveTimer);await txWrite('works','delete',w.id);works.delete(w.id);bodyUndoHistory.delete(w.id);if(!works.size){const fresh=makeWork('はじめての物語');works.set(fresh.id,fresh);transientStarterId=fresh.id}currentId=works.keys().next().value;renderAll();refreshWorkList();$('exportDialog').close();say('作品を削除したよ')});$('historyBtn').addEventListener('click',showHistory);$('closeHistory').addEventListener('click',()=>$('historyDialog').close());$('noticeClose').addEventListener('click',()=>$('safetyBanner').remove());
+document.addEventListener('keydown',e=>{
+ if(!(e.metaKey||e.ctrlKey)||e.altKey)return;
+ const key=e.key.toLowerCase();
+ if(key==='s'){e.preventDefault();exportBy('all');return}
+ if(key!=='z'&&key!=='y')return;
+ // Do not hijack the native undo in titles, notes or modal fields.
+ const target=e.target;
+ if(target?.closest?.('dialog')||target?.matches?.('#workTitle,#noteText,input,select')||
+    (target?.tagName==='TEXTAREA'&&!target.classList.contains('half')&&target.id!=='bookEditor'))return;
+ const redo=(key==='z'&&e.shiftKey)||(key==='y'&&!e.shiftKey);
+ if(key==='y'&&e.shiftKey)return;
+ e.preventDefault();bodyUndoOrRedo(redo);
+},true);
 window.addEventListener('beforeunload',()=>{if(current())saveNow(currentId)});
 }
 
@@ -1546,6 +1598,7 @@ window.KotonohaBridge={
     const wasStarter=isUnusedStarter(currentId);
     if(wasStarter)discardUnusedStarter();
     works.set(w.id,w);
+    resetBodyHistory(w);
     if(wasStarter){
       currentId=w.id;
       try{localStorage.setItem('kotonoha-current-id',w.id)}catch(e){}
@@ -1555,7 +1608,7 @@ window.KotonohaBridge={
   },
   conflictCopy:async work=>{
    const w=normalWork({...work,id:uuid(),title:String(work.title||DEFAULT_TITLE)+'（同期競合・保護コピー）',updated:Date.now()});
-   works.set(w.id,w);await txWrite('works','put',w);
+   works.set(w.id,w);await txWrite('works','put',w);resetBodyHistory(w);
    refreshWorkList();say('異なる編集を検出。競合コピーを保存したよ');
    return w.id;
   },
