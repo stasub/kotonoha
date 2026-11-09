@@ -233,7 +233,7 @@
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">文字選択・ズーム調整 v0.6</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">書籍の削除・選択安定化 v0.7</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1208,6 +1208,26 @@ if(nativeInPlace){
   // 見えている本文からタップ位置を取得して入力窓へ転送する。
   // focus は iOS のユーザー操作イベント内で同期的に呼ぶ。
   let bookPress=null,ignoreBookClick=false,lastBookTap=null,lastSel=null;
+  // v0.7: 選択直後のiOS選択解除対策は「編集が始まるまで」だけ有効。
+  // 保護タイマーが走ったまま文字を削除すると、古い位置の範囲が
+  // 次の文字を選択し直してしまうため、編集イベントで必ず無効化する。
+  let bookEditGeneration=0;
+  const endBookSelectionProtection=()=>{
+   bookEditGeneration++;
+   lastSel=null;
+   ignoreBookClick=false;
+  };
+  t.addEventListener('beforeinput',endBookSelectionProtection);
+  t.addEventListener('input',endBookSelectionProtection);
+  t.addEventListener('compositionstart',endBookSelectionProtection);
+  t.addEventListener('cut',endBookSelectionProtection);
+  t.addEventListener('paste',endBookSelectionProtection);
+  t.addEventListener('drop',endBookSelectionProtection);
+  // 物理キーボードでの編集にも対応。矢印での選択移動は邪魔しない。
+  t.addEventListener('keydown',e=>{
+   if(e.key==='Backspace'||e.key==='Delete'||e.key==='Enter'||
+      (e.key.length===1&&!e.metaKey&&!e.ctrlKey))endBookSelectionProtection();
+  });
   function selectBookWord(x,y){
    if(activeStyle==='manu'||nativeComposing.has(t))return;
    const pos=tapCaretIndex(t,x,y),str=t.value;
@@ -1226,12 +1246,15 @@ if(nativeInPlace){
    t.focus({preventScroll:true});t.setSelectionRange(start,end);
    rememberNativeRange(t);syncBookPreview();
    // 指を離したあとに飛んでくる click で選択が消えないよう、次に触れるまで無視し続ける。
-   ignoreBookClick=true;lastSel={start,end,time:performance.now()};
+   ignoreBookClick=true;lastSel={start,end,time:performance.now(),value:str,generation:bookEditGeneration};
    keepSel();
   }
   // 離した直後にiOSがフォーカス/選択を崩した場合は、直前の選択範囲を戻す。
   const reapplySel=()=>{
-   const r=lastSel;if(!r||performance.now()-r.time>2000)return;
+   const r=lastSel;
+   if(!r||performance.now()-r.time>2000)return;
+   // 編集後は同じ数値の位置でも「別の文字」になり得る。
+   if(r.generation!==bookEditGeneration||r.value!==t.value){lastSel=null;return;}
    if(t.selectionStart!==r.start||t.selectionEnd!==r.end||document.activeElement!==t){
     try{t.focus({preventScroll:true});t.setSelectionRange(r.start,r.end)}catch(_){return}
     rememberNativeRange(t);syncBookPreview();
