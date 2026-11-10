@@ -237,7 +237,7 @@
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">書籍キーボード改善 v0.9</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">書籍タップ入力改善 v1.0</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1254,7 +1254,7 @@ if(nativeInPlace){
   // 見えている本文からタップ位置を取得して入力窓へ転送する。
   // focus は iOS のユーザー操作イベント内で同期的に呼ぶ。
   let bookPress=null,ignoreBookClick=false,lastBookTap=null,lastSel=null;
-  let lastTouchBookUp=0;
+  let lastTouchBookUp=0, pendingBookTap=null;
   // iOSは遅延したfocus()だけではソフトキーボードを開かない場合がある。
   // 触り始めのユーザー操作内で先にフォーカスを確保する。
   const focusBookFromGesture=()=>{
@@ -1326,10 +1326,12 @@ if(nativeInPlace){
    // UI上の文字とIME欄を別要素にしているため、プレビュー側の
    // 既定フォーカス移動は止め、ネイティブ入力欄のフォーカスを保持する。
    // スクロールはCSS touch-action:pan-x pan-y に委ねる。
-   if(e.cancelable)e.preventDefault();
-   ignoreBookClick=false;lastSel=null;
+   // v1.0: pointerdown.preventDefault は iOS の1回タップによる
+   // 通常のキーボード起動を妨げる場合があるので使わない。
+   ignoreBookClick=false;lastSel=null;pendingBookTap=null;
    const index=tapCaretIndex(t,e.clientX,e.clientY);
-   const record={x:e.clientX,y:e.clientY,index,id:e.pointerId,timer:0};bookPress=record;
+   const record={x:e.clientX,y:e.clientY,index,id:e.pointerId,timer:0,
+    hadFocus:document.activeElement===t};bookPress=record;
    focusBookFromGesture();
    record.timer=setTimeout(()=>{if(bookPress===record){selectBookWord(record.x,record.y,record.index);bookPress=null}},480);
   });
@@ -1359,17 +1361,38 @@ if(nativeInPlace){
    if(!rec||rec.id!==e.pointerId||activeStyle==='manu')return;
    const now=performance.now();
    if(lastBookTap&&now-lastBookTap.time<450&&Math.hypot(e.clientX-lastBookTap.x,e.clientY-lastBookTap.y)<40){
-    lastBookTap=null;selectBookWord(e.clientX,e.clientY,rec.index);return;
+    lastBookTap=null;pendingBookTap=null;
+    selectBookWord(e.clientX,e.clientY,rec.index);return;
    }
    lastBookTap={time:now,x:e.clientX,y:e.clientY};
+   pendingBookTap={time:now,index:rec.index};
+   // v1.0: touch / pen の pointerup は Safari のユーザー操作として認識される。
+   // pointerdown で先にフォーカスしていても、キーボードが開かなかった場合は
+   // 最初の単発タップのみここでいったん解除→フォーカスし直す。
+   // すでに編集していたテキストの変換を途中で切らないよう、操作前に非フォーカスだった場合だけ。
+   if(!rec.hadFocus&&document.activeElement===t&&!nativeComposing.has(t)){
+    try{t.blur()}catch(_){}
+   }
    selectBookCaretAt(rec.index);
   });
   preview.addEventListener('pointercancel',endPress);
   preview.addEventListener('click',e=>{
    if(activeStyle==='manu')return;
-   // タッチ操作はpointerup側ですでに位置決定済み。
-   // 合成clickで選択やフォーカスを上書きしない。
-   if(performance.now()-lastTouchBookUp<750){e.preventDefault();return}
+   // 単発タップの合成 click は止めず、Safari がキーボードを起動できる機会を確保する。
+   // 指を置いた座標は keyboard 表示による viewport 変化前のものを使う。
+   if(performance.now()-lastTouchBookUp<750){
+    if(lastSel){e.preventDefault();return;} // 長押し/ダブルタップの語句選択は保護
+    const hit=pendingBookTap;
+    pendingBookTap=null;
+    if(hit&&performance.now()-hit.time<750){
+     if(document.activeElement!==t)try{t.focus({preventScroll:true})}catch(_){}
+     if(!nativeComposing.has(t)&&!nativePending.has(t)){
+      try{t.setSelectionRange(hit.index,hit.index)}catch(_){}
+      rememberedNativeSelection=null;syncBookPreview();
+     }
+    }
+    return;
+   }
    if(ignoreBookClick){ignoreBookClick=false;return}
    keepSel();
    setCaretFromTap(t,e.clientX,e.clientY);
