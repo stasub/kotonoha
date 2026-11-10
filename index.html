@@ -145,6 +145,10 @@
 .book-preview{z-index:3;pointer-events:auto!important;touch-action:pan-x pan-y;
  user-select:none;-webkit-user-select:none;cursor:text}
 .book-preview .editor-line{pointer-events:auto}
+/* 単行本/文庫本: タップの的を「再描画で作り直される行・文字」ではなく、作り直されない .book-preview 本体にする。
+   (フォーカス直後の syncBookPreview が行を作り直すと、iOSでは指の下の要素が消えて pointerup/click が届かず、
+   カーソル移動もキーボード起動も起きなくなるため。位置は座標から計算しているので判定結果は変わらない) */
+.book-preview .editor-line,.book-preview .editor-line *{pointer-events:none!important}
 .tank .book-preview{font-size:19px;line-height:1.85;letter-spacing:.065em}
 .bunko .book-preview{font-size:15px;line-height:1.9;letter-spacing:.065em}
 .book-caret{z-index:4}
@@ -232,12 +236,29 @@
 .editor-undo{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
 .editor-undo button{font-variant-numeric:tabular-nums}
 @media print{.editor-undo{display:none!important}}
+/* 原稿用紙が長くなっても道具とメモに届くようにする（既存ルールは変更せず、後ろに追加するだけ）
+   1) ツール行を画面上部に貼り付ける(sticky)  2) 狭い画面ではメモ帳を「メモ」ボタンで上から開く */
+.tool-row{position:sticky;top:0;z-index:30;background:var(--background);border-bottom:1px solid var(--border)}
+html{scroll-padding-top:64px}
+.memo-close{display:none}
+@media(max-width:700px){
+ .tool-row{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:8px 2px}
+ .tool-row::-webkit-scrollbar{display:none}
+ .tool-row>button{flex:none;white-space:nowrap}
+ .tool-row .mini-help{display:none}
+}
+@media(max-width:1160px){
+ body:not(.notes-open) #notesPanel{display:none!important}
+ body.notes-open #notesPanel{position:fixed;left:0;right:0;top:0;bottom:auto;max-height:52vh;max-height:52dvh;overflow:auto;overscroll-behavior:contain;z-index:60;border-top:0;border-bottom:1px solid var(--border);box-shadow:0 8px 24px #0003}
+ body.notes-open .memo-close{display:block;position:absolute;top:10px;right:12px;z-index:2}
+}
+@media(min-width:1161px){#memoToggle{display:none!important}}
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">書籍タップ入力改善 v1.0</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">書籍タップ入力改善 v1.1（Claude修正版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -257,7 +278,7 @@
     <div class="tab-group" role="group" aria-label="表示スタイル"><button class="mode active" data-style="manu">原稿用紙</button><button class="mode" data-style="tank">単行本</button><button class="mode" data-style="bunko">文庫本</button></div>
     <div class="tools-right"><label class="check-control" id="horizontalOption"><input type="checkbox" id="horizontal"> 横書き</label><label class="check-control" id="titleOption"><input type="checkbox" id="showGutterTitle" checked> 中央タイトル</label><label class="check-control"><input type="checkbox" id="kinsoku"> 禁則処理</label></div>
   </div>
-  <div class="tool-row"><button class="secondary" id="rubyAdd" title="選択した言葉にだけルビを付けます">＋ 選択語にルビ</button><button class="secondary" id="rubyRemove">ルビを外す</button><div class="mini-help" id="editHelp">原稿用紙は右上から縦に書くよ</div><div class="editor-undo" role="group" aria-label="本文の取り消しとやり直し"><button class="secondary" type="button" id="undoBody" title="本文を取り消す（⌘Z / Ctrl+Z）" disabled>↶ 取り消す</button><button class="secondary" type="button" id="redoBody" title="本文をやり直す（Shift+⌘Z / Ctrl+Y）" disabled>↷ やり直す</button></div><button class="secondary" id="historyBtn">履歴</button><button class="secondary" id="exportBtn">書き出し ▾</button></div>
+  <div class="tool-row"><button class="secondary" id="rubyAdd" title="選択した言葉にだけルビを付けます">＋ 選択語にルビ</button><button class="secondary" id="rubyRemove">ルビを外す</button><button class="secondary" type="button" id="copySel" title="選択した文字をコピーします">コピー</button><button class="secondary" type="button" id="pasteSel" title="カーソル位置(選択中なら選択部分)に貼り付けます">貼り付け</button><button class="secondary" type="button" id="memoToggle" aria-expanded="false" title="メモ帳を開閉します">メモ</button><div class="mini-help" id="editHelp">原稿用紙は右上から縦に書くよ</div><div class="editor-undo" role="group" aria-label="本文の取り消しとやり直し"><button class="secondary" type="button" id="undoBody" title="本文を取り消す（⌘Z / Ctrl+Z）" disabled>↶ 取り消す</button><button class="secondary" type="button" id="redoBody" title="本文をやり直す（Shift+⌘Z / Ctrl+Y）" disabled>↷ やり直す</button></div><button class="secondary" id="historyBtn">履歴</button><button class="secondary" id="exportBtn">書き出し ▾</button></div>
   <div class="paper-controls" aria-label="原稿の表示倍率">
     <span>原稿の表示倍率</span>
     <button type="button" id="zoomOut" class="zoom-button" aria-label="原稿を縮小">－</button>
@@ -274,7 +295,7 @@
 </main>
 <div id="notesSplitter" class="panel-splitter" data-edge="notes" role="separator" tabindex="0" aria-label="メモ帳の幅を調整" aria-orientation="vertical" title="左右へドラッグして幅を変更（ダブルクリックで初期化）"><span>⋮</span></div>
 <aside class="notes-panel" id="notesPanel">
-  <div class="notes-heading"><span class="kicker">NOTEBOOK</span><strong>メモ帳</strong></div>
+  <button class="secondary memo-close" type="button" id="memoClose">閉じる</button><div class="notes-heading"><span class="kicker">NOTEBOOK</span><strong>メモ帳</strong></div>
   <div class="notes-tabs" role="group" aria-label="メモの種類"><button class="notes-tab active" data-note="work">作品メモ</button><button class="notes-tab" data-note="global">共通メモ</button></div>
   <label class="note-label" id="noteLabel" for="noteText">この作品の設定やアイデア</label><textarea id="noteText" class="notes-area" placeholder="人物設定、伏線、気になる表現などを自由にメモ…"></textarea>
   <div class="note-saved">メモも自動保存されるよ</div>
@@ -606,9 +627,22 @@ function makeNativeVisualLines(value,start=0,end=0,rubies=[],origin=0,capacity=2
 }
 /* 実際に描画された親文字の中央へ読みを合わせる。
    ルビ自身は絶対配置なので本文の列幅・文字数・折返しを変えない。 */
+/* CSS zoom の内側で「画面上の寸法 ÷ zoom内側の寸法」を実測する。
+   ブラウザごとに getBoundingClientRect の返し方が違っても、倍率の食い違いでルビがずれないようにする。 */
+function bookRectScale(root){
+ const fallback=paperViewScale()||1;
+ try{
+  const p=document.createElement('i');
+  p.style.cssText='position:absolute;left:0;top:0;width:100px;height:100px;margin:0;padding:0;border:0;visibility:hidden;pointer-events:none';
+  root.appendChild(p);const k=p.getBoundingClientRect().width/100;p.remove();
+  return k>.3&&k<5?k:fallback;
+ }catch(_){return fallback}
+}
 function alignRubyFloats(root){
  if(!root)return;
  const horizontal=root.classList.contains('native-visual')&&!!current()?.horizontal;
+ // 単行本/文庫本(.book-view)はCSS zoomで拡大縮小される。rectは画面上の寸法なので、倍率で割ってzoom内側の座標に戻す。
+ const zs=root.closest?.('.book-view')?bookRectScale(root):1;
  for(const line of root.querySelectorAll('.editor-line')){
   const markers=line.querySelectorAll('.ruby-float');if(!markers.length)continue;
   const glyphs=line.querySelectorAll(':scope > .editor-glyph');
@@ -622,7 +656,7 @@ function alignRubyFloats(root){
     mark.style.left=((a.left+b.right)/2-lineRect.left-mr.width/2)+'px';
     const rgv=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--rg'))||14;mark.style.top=(-(rgv+mr.height)/2)+'px';
    }else{
-    mark.style.top=((a.top+b.bottom)/2-lineRect.top-mr.height/2)+'px';
+    mark.style.top=(((a.top+b.bottom)/2-lineRect.top-mr.height/2)/zs)+'px';
    }
   }
  }
@@ -713,6 +747,7 @@ function tapCaretIndex(el,clientX,clientY){
 }
 function setCaretFromTap(el,x,y){
  if(!el?.isConnected||nativeComposing.has(el)||nativePending.has(el))return;
+ if(el._wordSelHold&&performance.now()<el._wordSelHold)return; // 原稿用紙: ダブルタップ/長押しの語句選択を保護
  if(el.id!=='bookEditor'&&el.selectionStart!==el.selectionEnd)return; // 原稿用紙の長押し選択は優先
  const idx=tapCaretIndex(el,x,y);
  try{el.focus({preventScroll:true});el.setSelectionRange(idx,idx)}catch(e){return}
@@ -1151,8 +1186,91 @@ function wireTankPageScroll(el){
   if(isTankNativeEditor(document.activeElement)&&performance.now()<=tankPageScroll.until)tankScrollSchedule(document.activeElement)
  },{passive:true});
 }
+/* 原稿用紙(半面textarea)専用: ダブルタップ / 長押しで語句選択。
+   単行本・文庫本の selectBookWord と同じ考え方で、見た目の座標から位置を逆算する。
+   ワンタップのカーソル移動(setCaretFromTap)や他の処理は変更しない。 */
+function wireHalfTouchSelect(el){
+ let press=null,lastTap=null,gen=0,sel=null;
+ const touchy=e=>e.pointerType==='touch'||e.pointerType==='pen';
+ const release=()=>{gen++;sel=null;el._wordSelHold=0};
+ for(const ev of ['beforeinput','input','compositionstart','cut','paste','drop'])el.addEventListener(ev,release);
+ el.addEventListener('keydown',e=>{if(e.key==='Backspace'||e.key==='Delete'||e.key==='Enter'||(e.key.length===1&&!e.metaKey&&!e.ctrlKey))release()});
+ const wordAt=pos=>{
+  const str=el.value;if(!str)return null;
+  let start=pos,end=pos;
+  if(typeof Intl.Segmenter==='function'){
+   const words=[...new Intl.Segmenter('ja',{granularity:'word'}).segment(str)];
+   const w=words.find(x=>x.index<=pos&&pos<x.index+x.segment.length&&x.isWordLike)
+    ||words.findLast(x=>x.index+x.segment.length===pos&&x.isWordLike);
+   if(w){start=w.index;end=start+w.segment.length}
+  }
+  if(start===end){
+   const g=graphemes(str.slice(pos))[0]||'';
+   start=pos;end=Math.min(str.length,pos+g.length);
+  }
+  if(end<=start||str.slice(start,end).trim()==='')return null;
+  return{start,end};
+ };
+ // トリプルタップ: この半面の中で、前後の改行までの段落を選ぶ。
+ const paraAt=pos=>{
+  const str=el.value;if(!str)return null;
+  pos=Math.max(0,Math.min(pos,str.length));
+  if(pos>0&&(pos===str.length||str[pos]==='\n'))pos--;
+  if(str[pos]==='\n')return null;
+  const start=str.lastIndexOf('\n',pos-1)+1;
+  let end=str.indexOf('\n',pos);if(end<0)end=str.length;
+  return end>start?{start,end}:null;
+ };
+ const reapply=()=>{
+  const r=sel;
+  if(!r||!el.isConnected||r.gen!==gen||r.value!==el.value||nativeComposing.has(el))return;
+  if(el.selectionStart!==r.start||el.selectionEnd!==r.end||document.activeElement!==el){
+   try{el.focus({preventScroll:true});el.setSelectionRange(r.start,r.end)}catch(_){return}
+   rememberNativeRange(el);syncNativeVisual(el);
+  }
+ };
+ const pick=(index,para=false)=>{
+  if(!el.isConnected||nativeComposing.has(el)||nativePending.has(el))return false;
+  const r=para?paraAt(index):wordAt(index);if(!r)return false;
+  try{if(document.activeElement!==el)el.focus({preventScroll:true});el.setSelectionRange(r.start,r.end)}catch(_){return false}
+  rememberNativeRange(el);syncNativeVisual(el);
+  sel={start:r.start,end:r.end,value:el.value,gen};
+  el._wordSelHold=performance.now()+900;
+  [60,250,600].forEach(d=>setTimeout(reapply,d));
+  return true;
+ };
+ el.addEventListener('pointerdown',e=>{
+  if(!touchy(e))return;
+  sel=null;el._wordSelHold=0;
+  if(press)clearTimeout(press.timer);
+  let index=-1;try{index=tapCaretIndex(el,e.clientX,e.clientY)}catch(_){}
+  // すでに選択済みの範囲の上を押した場合は、ネイティブのコピー等のメニューに任せる。
+  const inside=el.selectionStart!==el.selectionEnd&&index>=el.selectionStart&&index<=el.selectionEnd;
+  const rec={x:e.clientX,y:e.clientY,id:e.pointerId,index,fired:false,timer:0};
+  if(index>=0&&!inside)rec.timer=setTimeout(()=>{if(press===rec){rec.fired=pick(rec.index)}},480);
+  press=rec;
+ });
+ el.addEventListener('pointermove',e=>{
+  if(press&&press.id===e.pointerId&&!press.fired&&Math.hypot(e.clientX-press.x,e.clientY-press.y)>12){clearTimeout(press.timer);press=null}
+ });
+ el.addEventListener('pointercancel',()=>{if(press&&!press.fired)clearTimeout(press.timer);press=null});
+ el.addEventListener('pointerup',e=>{
+  const rec=press;press=null;
+  if(!touchy(e)||!rec||rec.id!==e.pointerId)return;
+  clearTimeout(rec.timer);
+  if(rec.fired){el._wordSelHold=performance.now()+900;return} // 長押しで選択済み
+  const now=performance.now();
+  if(rec.index>=0&&lastTap&&now-lastTap.time<450&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<40){
+   const triple=lastTap.count===2;
+   lastTap=triple?null:{time:now,x:e.clientX,y:e.clientY,count:2};
+   pick(rec.index,triple);return;
+  }
+  lastTap={time:now,x:e.clientX,y:e.clientY,count:1};
+ });
+}
 function wireNative(el){
  wireTankPageScroll(el);
+ if(el.classList.contains('half'))wireHalfTouchSelect(el);
  el.addEventListener('scroll',()=>{if(el.classList.contains('half'))resetScroll(el)});
  el.addEventListener('focus',()=>{syncNativeVisual(el)});
  let touchDown=null;
@@ -1308,6 +1426,21 @@ if(nativeInPlace){
    ignoreBookClick=true;lastSel={start,end,time:performance.now(),value:str,generation:bookEditGeneration};
    keepSel();
   }
+  // トリプルタップ: タップ位置の段落(前後の改行まで)を選択する。
+  function selectBookParagraph(index){
+   if(activeStyle==='manu'||nativeComposing.has(t)||nativePending.has(t))return;
+   const str=t.value;if(!str)return;
+   let pos=Math.max(0,Math.min(index,str.length));
+   if(pos>0&&(pos===str.length||str[pos]==='\n'))pos--;
+   if(str[pos]==='\n')return; // 空行
+   const start=str.lastIndexOf('\n',pos-1)+1;
+   let end=str.indexOf('\n',pos);if(end<0)end=str.length;
+   if(end<=start)return;
+   try{if(document.activeElement!==t)t.focus({preventScroll:true});t.setSelectionRange(start,end)}catch(_){return}
+   rememberNativeRange(t);syncBookPreview();
+   ignoreBookClick=true;lastSel={start,end,time:performance.now(),value:str,generation:bookEditGeneration};
+   keepSel();
+  }
   // 離した直後にiOSがフォーカス/選択を崩した場合は、直前の選択範囲を戻す。
   const reapplySel=()=>{
    const r=lastSel;
@@ -1361,10 +1494,13 @@ if(nativeInPlace){
    if(!rec||rec.id!==e.pointerId||activeStyle==='manu')return;
    const now=performance.now();
    if(lastBookTap&&now-lastBookTap.time<450&&Math.hypot(e.clientX-lastBookTap.x,e.clientY-lastBookTap.y)<40){
-    lastBookTap=null;pendingBookTap=null;
-    selectBookWord(e.clientX,e.clientY,rec.index);return;
+    // 2回目=語句選択、3回目=段落(改行から改行まで)選択
+    const triple=lastBookTap.count===2;
+    lastBookTap=triple?null:{time:now,x:e.clientX,y:e.clientY,count:2};pendingBookTap=null;
+    if(triple)selectBookParagraph(rec.index);else selectBookWord(e.clientX,e.clientY,rec.index);
+    return;
    }
-   lastBookTap={time:now,x:e.clientX,y:e.clientY};
+   lastBookTap={time:now,x:e.clientX,y:e.clientY,count:1};
    pendingBookTap={time:now,index:rec.index};
    // v1.0: touch / pen の pointerup は Safari のユーザー操作として認識される。
    // pointerdown で先にフォーカスしていても、キーボードが開かなかった場合は
@@ -1400,6 +1536,65 @@ if(nativeInPlace){
  }else wireEditor($('bookEditor'));
 $('noteText').addEventListener('input',e=>{if(noteMode==='work'){current().note=e.target.value;change()}else{globalNote=e.target.value;setState('端末に保存中…');clearTimeout(saveGlobalNote.timer);saveGlobalNote.timer=setTimeout(saveGlobalNote,400)}});
 document.querySelectorAll('.notes-tab').forEach(b=>b.addEventListener('click',()=>{noteMode=b.dataset.note;document.querySelectorAll('.notes-tab').forEach(x=>x.classList.toggle('active',x===b));$('noteText').value=noteMode==='work'?current().note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア'}));
+/* 選択範囲のコピー: 自前で作った選択にはiOS標準のコピーメニューが出ないため、ボタンで本文からコピーする。
+   (pointerdownでフォーカスを奪わないので、キーボードを閉じなくても選択を保ったままコピーできる) */
+$('copySel').addEventListener('pointerdown',e=>{rememberNativeRange(document.activeElement);e.preventDefault()});
+$('copySel').addEventListener('click',async()=>{
+ const info=selectedTextInfo();
+ if(!info||!info.text){say('コピーする文字を選んでね');return}
+ const text=info.text;let ok=false;
+ try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);ok=true}}catch(_){}
+ if(!ok){
+  const prev=document.activeElement,keep=prev&&prev.tagName==='TEXTAREA'?[prev.selectionStart,prev.selectionEnd]:null;
+  const ta=document.createElement('textarea');ta.value=text;ta.readOnly=true;ta.style.cssText='position:fixed;top:0;left:0;opacity:0;font-size:16px';
+  document.body.append(ta);ta.focus({preventScroll:true});ta.select();try{ta.setSelectionRange(0,text.length)}catch(_){}
+  try{ok=document.execCommand('copy')}catch(_){}
+  ta.remove();
+  if(prev&&prev.isConnected){try{prev.focus({preventScroll:true});if(keep)prev.setSelectionRange(keep[0],keep[1])}catch(_){}}
+ }
+ say(ok?`コピーしたよ（${[...text].length}字）`:'コピーできへんかった。もう一度試してね');
+});
+/* 貼り付け: 単行本・文庫本は見た目の層が入力欄を覆っていてiOS標準の「ペースト」メニューが出ないため、ボタンで貼り付ける。
+   入力欄への挿入は通常入力と同じ経路(input イベント)を通すので、本文の保存・ルビずれ補正・取り消し履歴は従来どおり働く。 */
+/* iPhoneはボタンを押した瞬間に入力欄のフォーカスが外れる(キーボードも消える)ため、
+   外れる前に「どの入力欄の・どの位置か」を覚えておき、貼り付け時にそこへ戻す。 */
+let pasteSpot=null;
+const isEditorArea=el=>!!el&&el.tagName==='TEXTAREA'&&(el.classList.contains('half')||el.id==='bookEditor');
+const rememberPasteSpot=el=>{if(isEditorArea(el))pasteSpot={el,start:el.selectionStart,end:el.selectionEnd}};
+document.addEventListener('focusout',e=>rememberPasteSpot(e.target),true);
+$('pasteSel').addEventListener('pointerdown',e=>{rememberNativeRange(document.activeElement);rememberPasteSpot(document.activeElement);e.preventDefault()});
+$('pasteSel').addEventListener('click',async()=>{
+ const spot=pasteSpot;
+ const el=isEditorArea(document.activeElement)?document.activeElement:spot?.el;
+ if(!el||!el.isConnected){say('貼り付ける位置を先にタップしてね');return}
+ if(nativeComposing.has(el)){say('変換を確定してから貼り付けてね');return}
+ // 外れたフォーカスと選択位置を戻す(クリック操作の中なのでキーボードも再び出る)。
+ const restore=()=>{
+  if(document.activeElement!==el)try{el.focus({preventScroll:true})}catch(_){}
+  if(spot&&spot.el===el)try{el.setSelectionRange(Math.min(spot.start,el.value.length),Math.min(spot.end,el.value.length))}catch(_){}
+ };
+ restore();
+ let text='';
+ try{text=await navigator.clipboard.readText()}catch(_){say('貼り付けが許可されへんかった。表示された「ペースト」を押してね');return}
+ text=String(text||'').replace(/\r\n?/g,'\n');
+ if(!text){say('クリップボードに文字がないよ');return}
+ if(!el.isConnected){say('貼り付ける位置を先にタップしてね');return}
+ restore();
+ let done=false;
+ try{done=document.execCommand('insertText',false,text)}catch(_){}
+ if(!done||!el.isConnected){
+  const a=el.selectionStart,b=el.selectionEnd;
+  el.setRangeText(text,a,b,'end');
+  el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertFromPaste',data:text}));
+ }
+ syncNativeVisual(el);
+ say(`貼り付けたよ（${[...text].length}字）`);
+});
+/* メモ帳の開閉(狭い画面のみ。広い画面ではメモは右側に常時表示) */
+{const setMemo=v=>{document.body.classList.toggle('notes-open',v);$('memoToggle')?.setAttribute('aria-expanded',String(v))};
+ $('memoToggle')?.addEventListener('click',()=>setMemo(!document.body.classList.contains('notes-open')));
+ $('memoClose')?.addEventListener('click',()=>setMemo(false));
+ try{matchMedia('(min-width:1161px)').addEventListener('change',e=>{if(e.matches)setMemo(false)})}catch(_){}}
 $('rubyAdd').addEventListener('pointerdown',e=>{rememberNativeRange(document.activeElement);e.preventDefault()});$('rubyRemove').addEventListener('pointerdown',e=>{rememberNativeRange(document.activeElement);e.preventDefault()});
 function refreshRubyMatches(){
  const input=$('rubyTarget').value,sel=$('rubyOccurrence'),label=$('rubyOccurrenceLabel');
@@ -1490,16 +1685,37 @@ function initViewControls(){
   root.setProperty('--gutter',`${43*s}px`);
   if(typeof activeStyle!=='undefined'&&activeStyle==='manu'&&!nativeComposing.size){
    requestAnimationFrame(()=>{for(const half of halfEls)syncNativeVisual(half)});
+  }else if(typeof activeStyle!=='undefined'&&activeStyle!=='manu'){
+   requestAnimationFrame(()=>{const pv=$('bookPreview');if(pv)alignRubyFloats(pv)});
+   setTimeout(()=>{const pv=$('bookPreview');if(pv&&activeStyle!=='manu')alignRubyFloats(pv)},160);
   }
   if(zoom)zoom.value=String(viewZoomPercent);
   if(output)output.textContent=viewZoomPercent+'%';
   if(persist)store('kotonoha-ui-paper-zoom',viewZoomPercent);
  };
  setZoom(restore('kotonoha-ui-paper-zoom',100));
- zoom?.addEventListener('input',()=>setZoom(zoom.value));
- $('zoomIn')?.addEventListener('click',()=>setZoom(viewZoomPercent+10));
- $('zoomOut')?.addEventListener('click',()=>setZoom(viewZoomPercent-10));
- $('zoomReset')?.addEventListener('click',()=>setZoom(100));
+ /* 単行本/文庫本: 倍率を変えると紙が伸び縮みするので、そのままだとスクロール位置が文章の先の方にずれる。
+    変更前に見ていた中心(左右の端にいた場合は端)を覚えて、変更後に戻す。原稿用紙は従来どおり。 */
+ const zoomKeepView=value=>{
+  const vp=$('paperViewport');
+  if(!vp||typeof activeStyle==='undefined'||activeStyle==='manu'){setZoom(value);return}
+  const maxX=vp.scrollWidth-vp.clientWidth;
+  // 縦書きは書き出しが右端。もともと全体が収まっていてスクロールが無かった時は「右端にいた」扱いにして、
+  // 拡大後も書き出し側を表示する(以前は左端=文章の先の方へ飛んでいた)。
+  const noScroll=maxX<=1;
+  const atLeft=!noScroll&&vp.scrollLeft<=1,atRight=noScroll||vp.scrollLeft>=maxX-1;
+  const fx=vp.scrollWidth?(vp.scrollLeft+vp.clientWidth/2)/vp.scrollWidth:.5;
+  const fy=vp.scrollHeight?(vp.scrollTop+vp.clientHeight/2)/vp.scrollHeight:.5;
+  setZoom(value);
+  const nx=vp.scrollWidth-vp.clientWidth;
+  vp.scrollLeft=atRight?nx:atLeft?0:Math.max(0,Math.min(nx,fx*vp.scrollWidth-vp.clientWidth/2));
+  const ny=vp.scrollHeight-vp.clientHeight;
+  if(ny>0)vp.scrollTop=Math.max(0,Math.min(ny,fy*vp.scrollHeight-vp.clientHeight/2));
+ };
+ zoom?.addEventListener('input',()=>zoomKeepView(zoom.value));
+ $('zoomIn')?.addEventListener('click',()=>zoomKeepView(viewZoomPercent+10));
+ $('zoomOut')?.addEventListener('click',()=>zoomKeepView(viewZoomPercent-10));
+ $('zoomReset')?.addEventListener('click',()=>zoomKeepView(100));
  initPaperPinchZoom($('paperViewport'),setZoom);
  const specs={library:{handle:'librarySplitter',css:'--library-width',key:'kotonoha-ui-library-width',defaultSize:218,min:145,max:400,sign:1},notes:{handle:'notesSplitter',css:'--notes-width',key:'kotonoha-ui-notes-width',defaultSize:247,min:185,max:460,sign:-1}};
  const apply=(spec,value)=>{
