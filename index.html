@@ -221,6 +221,13 @@
 }
 @media(max-width:700px){.paper-controls{justify-content:flex-start}.paper-controls #paperZoom{width:95px}}
 @media print{:root{--cell:26px!important;--step:30px!important;--rg:12px!important;--gutter:43px!important}.book-view{zoom:1!important}.paper-controls,.panel-splitter{display:none!important}}
+/* v0.9: iOSのフォーカス対象は1pxの極小入力窓にせず、視認不能な18px窓にする。
+   見た目の本文とクリック位置は引き続きbook-previewが担当。 */
+.book-surface .book-editor:is(textarea){
+ width:18px!important;min-width:18px!important;max-width:18px!important;
+ height:18px!important;min-height:18px!important;max-height:18px!important;
+ caret-color:transparent!important;
+}
 /* v0.8 — body undo/redo buttons are separate from the native editor controls. */
 .editor-undo{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
 .editor-undo button{font-variant-numeric:tabular-nums}
@@ -230,7 +237,7 @@
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">取り消し・やり直し v0.8</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">書籍キーボード改善 v0.9</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1247,6 +1254,18 @@ if(nativeInPlace){
   // 見えている本文からタップ位置を取得して入力窓へ転送する。
   // focus は iOS のユーザー操作イベント内で同期的に呼ぶ。
   let bookPress=null,ignoreBookClick=false,lastBookTap=null,lastSel=null;
+  let lastTouchBookUp=0;
+  // iOSは遅延したfocus()だけではソフトキーボードを開かない場合がある。
+  // 触り始めのユーザー操作内で先にフォーカスを確保する。
+  const focusBookFromGesture=()=>{
+   if(activeStyle==='manu'||nativeComposing.has(t))return;
+   if(document.activeElement!==t)try{t.focus({preventScroll:true})}catch(_){}
+  };
+  const selectBookCaretAt=idx=>{
+   if(nativeComposing.has(t)||nativePending.has(t))return;
+   try{if(document.activeElement!==t)t.focus({preventScroll:true});t.setSelectionRange(idx,idx)}catch(_){return}
+   rememberedNativeSelection=null;syncBookPreview();
+  };
   // v0.7: 選択直後のiOS選択解除対策は「編集が始まるまで」だけ有効。
   // 保護タイマーが走ったまま文字を削除すると、古い位置の範囲が
   // 次の文字を選択し直してしまうため、編集イベントで必ず無効化する。
@@ -1267,9 +1286,10 @@ if(nativeInPlace){
    if(e.key==='Backspace'||e.key==='Delete'||e.key==='Enter'||
       (e.key.length===1&&!e.metaKey&&!e.ctrlKey))endBookSelectionProtection();
   });
-  function selectBookWord(x,y){
+  function selectBookWord(x,y,fixedIndex=null){
    if(activeStyle==='manu'||nativeComposing.has(t))return;
-   const pos=tapCaretIndex(t,x,y),str=t.value;
+   // キーボード出現でページが移動しても、指を置いた時の文字位置を使う。
+   const pos=fixedIndex===null?tapCaretIndex(t,x,y):fixedIndex,str=t.value;
    let start=pos,end=pos;
    if(typeof Intl.Segmenter==='function'){
     const words=[...new Intl.Segmenter('ja',{granularity:'word'}).segment(str)];
@@ -1282,7 +1302,7 @@ if(nativeInPlace){
     start=at;end=Math.min(str.length,at+(graphemes(str.slice(at))[0]||'').length);
    }
    if(end<=start)return;
-   t.focus({preventScroll:true});t.setSelectionRange(start,end);
+   if(document.activeElement!==t)t.focus({preventScroll:true});t.setSelectionRange(start,end);
    rememberNativeRange(t);syncBookPreview();
    // 指を離したあとに飛んでくる click で選択が消えないよう、次に触れるまで無視し続ける。
    ignoreBookClick=true;lastSel={start,end,time:performance.now(),value:str,generation:bookEditGeneration};
@@ -1303,10 +1323,21 @@ if(nativeInPlace){
   // iPhone で見た目の本文を長押ししたときも「選択語にルビ」を使えるようにする。
   preview.addEventListener('pointerdown',e=>{
    if(e.pointerType!=='touch'&&e.pointerType!=='pen')return;
-   ignoreBookClick=false;lastSel=null; // 新しく触れたら、前の選択の保護は解除
-   const record={x:e.clientX,y:e.clientY,id:e.pointerId,timer:0};bookPress=record;
-   record.timer=setTimeout(()=>{if(bookPress===record){selectBookWord(record.x,record.y);bookPress=null}},480);
+   // UI上の文字とIME欄を別要素にしているため、プレビュー側の
+   // 既定フォーカス移動は止め、ネイティブ入力欄のフォーカスを保持する。
+   // スクロールはCSS touch-action:pan-x pan-y に委ねる。
+   if(e.cancelable)e.preventDefault();
+   ignoreBookClick=false;lastSel=null;
+   const index=tapCaretIndex(t,e.clientX,e.clientY);
+   const record={x:e.clientX,y:e.clientY,index,id:e.pointerId,timer:0};bookPress=record;
+   focusBookFromGesture();
+   record.timer=setTimeout(()=>{if(bookPress===record){selectBookWord(record.x,record.y,record.index);bookPress=null}},480);
   });
+  // Safariはtouchstartを「キーボード起動を許す直接操作」として扱う。
+  // timer/描画フレームの中で初めてfocusするのを避けるための補助。
+  preview.addEventListener('touchstart',e=>{
+   if(e.touches.length===1)focusBookFromGesture();
+  },{passive:true});
   preview.addEventListener('pointermove',e=>{
    if(bookPress?.id===e.pointerId&&Math.hypot(e.clientX-bookPress.x,e.clientY-bookPress.y)>12){
     clearTimeout(bookPress.timer);bookPress=null;
@@ -1317,25 +1348,30 @@ if(nativeInPlace){
   preview.addEventListener('pointerup',e=>{
    const rec=bookPress;endPress();
    if(e.pointerType!=='touch'&&e.pointerType!=='pen')return;
+   lastTouchBookUp=performance.now();
    if(lastSel){
-    /* A long-press timer alone cannot open iOS's keyboard; the finger lift
-       is the next trusted event. Do not alter the selected range. */
-    try{t.blur();t.focus({preventScroll:true});t.setSelectionRange(lastSel.start,lastSel.end)}catch(_){}
+    // blur→focusの往復はiPhoneでキーボードを閉じることがあるため禁止。
+    // touchstartから維持しているフォーカスと選択範囲をそのまま使う。
+    if(document.activeElement!==t)focusBookFromGesture();
+    try{t.setSelectionRange(lastSel.start,lastSel.end)}catch(_){}
     keepSel();return;
    }
    if(!rec||rec.id!==e.pointerId||activeStyle==='manu')return;
    const now=performance.now();
    if(lastBookTap&&now-lastBookTap.time<450&&Math.hypot(e.clientX-lastBookTap.x,e.clientY-lastBookTap.y)<40){
-    lastBookTap=null;selectBookWord(e.clientX,e.clientY);return;
+    lastBookTap=null;selectBookWord(e.clientX,e.clientY,rec.index);return;
    }
    lastBookTap={time:now,x:e.clientX,y:e.clientY};
+   selectBookCaretAt(rec.index);
   });
   preview.addEventListener('pointercancel',endPress);
   preview.addEventListener('click',e=>{
    if(activeStyle==='manu')return;
+   // タッチ操作はpointerup側ですでに位置決定済み。
+   // 合成clickで選択やフォーカスを上書きしない。
+   if(performance.now()-lastTouchBookUp<750){e.preventDefault();return}
    if(ignoreBookClick){ignoreBookClick=false;return}
    keepSel();
-   // 見た目の場所を取得してから IME 用入力欄へフォーカスする。
    setCaretFromTap(t,e.clientX,e.clientY);
   });
  }else wireEditor($('bookEditor'));
