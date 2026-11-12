@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">保存保護テスト v1.2a（Claude修正版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">保存誤判定対策 v1.2b（Claude入力版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -363,7 +363,7 @@ function say(s){const e=$('toast');e.textContent=s;e.classList.add('show');clear
 function setState(s,bad=false){const e=$('saveState');e.textContent=s;e.style.color=bad?'#b24335':'#5c7865'}
 /* v1.2a: 保存失敗した変更が1件でも残れば、「保存済み」を表示しない。
    作品IDごとの世代を持ち、古い書き込みの完了で最新編集を保存済みと誤認しない。 */
-const pendingWorkSaves=new Set(),failedWorkSaves=new Set(),workSaveVersions=new Map();
+const pendingWorkSaves=new Set(),failedWorkSaves=new Set(),workSaveVersions=new Map(),activeWorkSavePromises=new Map();
 let pendingGlobalNote=false,failedGlobalNote=false,failedConflictSave=false,globalNoteVersion=0;
 function hasLocalSaveRisk(){return !!(pendingWorkSaves.size||failedWorkSaves.size||pendingGlobalNote||failedGlobalNote||failedConflictSave)}
 function refreshLocalSaveState(){
@@ -411,29 +411,45 @@ async function saveNow(id=currentId){
   if(isUnusedStarter(id))return true;
   if(!db||!works.has(id))return false;
   if(id===transientStarterId)transientStarterId=null;
-  const version=workSaveVersions.get(id)||0;
-  const data=structuredClone(works.get(id));
-  pendingWorkSaves.add(id);
-  refreshLocalSaveState();
-  try{
-    await txWrite('works','put',data);
-    lastSavedAt=Date.now();
-    // この書き込み中に次の編集があれば、古い結果を「最新の保存成功」と扱わない。
-    const isLatest=(workSaveVersions.get(id)===version);
-    if(isLatest){
+  // v1.2b: 同じ作品の書き込みを直列化。2回目の呼び出しは既存の保存完了を待つ。
+  // 書き込み中に別の編集が発生しても「保存失敗」にはせず、最新版を書き足す。
+  if(activeWorkSavePromises.has(id))return activeWorkSavePromises.get(id);
+  const task=(async()=>{
+    pendingWorkSaves.add(id);
+    refreshLocalSaveState();
+    for(;;){
+      if(!works.has(id))return false;
+      const version=workSaveVersions.get(id)||0;
+      let data;
+      try{data=structuredClone(works.get(id));}
+      catch(e){
+        console.error('作品の保存データ作成失敗',e);
+        failedWorkSaves.add(id);
+        showLocalSaveFailure();
+        return false;
+      }
+      try{
+        await txWrite('works','put',data);
+        lastSavedAt=Date.now();
+      }catch(e){
+        console.error('作品の端末保存失敗',e);
+        failedWorkSaves.add(id);
+        showLocalSaveFailure();
+        return false;
+      }
+      // 保存処理中に編集があれば、書き込めた版を「保存失敗」と誤判定せず
+      // 次のループで最新世代の原稿を書き込む。ここではまだ保存済み表示しない。
+      if((workSaveVersions.get(id)||0)!==version)continue;
       failedWorkSaves.delete(id);
       pendingWorkSaves.delete(id);
+      refreshLocalSaveState();
       window.dispatchEvent(new CustomEvent('kotonoha:worksaved',{detail:{id}}));
+      return true;
     }
-    refreshLocalSaveState();
-    return isLatest;
-  }catch(e){
-    console.error('作品の端末保存失敗',e);
-    failedWorkSaves.add(id);
-    pendingWorkSaves.add(id);
-    showLocalSaveFailure();
-    return false;
-  }
+  })();
+  activeWorkSavePromises.set(id,task);
+  try{return await task;}
+  finally{if(activeWorkSavePromises.get(id)===task)activeWorkSavePromises.delete(id);}
 }
 /* v0.8: 本文＋ルビの直前編集だけを端末のメモリに保持する。
    ブラウザの textarea 履歴はページ分割やスタイル切替で消えるため、作品モデルを正とする。
@@ -1400,7 +1416,7 @@ async function selectWork(id){
   if(current()){
     await checkpoint(current());
     if(!await saveNow(currentId)){
-      showLocalSaveFailure('作品を切り替えずに止めたよ。現在の作品が端末に保存できていない');
+      showLocalSaveFailure('端末への保存が実際に失敗したため作品の切り替えを止めたよ');
       return;
     }
   }
@@ -1413,7 +1429,7 @@ async function createWork(){
   if(current()){
     await checkpoint(current());
     if(!await saveNow(currentId)){
-      showLocalSaveFailure('新規作品の作成を止めたよ。現在の作品が端末に保存できていない');
+      showLocalSaveFailure('端末への保存が実際に失敗したため新規作成を止めたよ');
       return;
     }
   }
