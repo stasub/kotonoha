@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">書籍タップ入力改善 v1.1（Claude修正版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">保存保護テスト v1.2a（Claude修正版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -361,6 +361,21 @@ const jpDate=n=>new Date(n||Date.now()).toLocaleString('ja-JP',{month:'numeric',
 const cleanName=n=>String(n||'無題').replace(/[\\/:*?"<>|]/g,'_').slice(0,60);
 function say(s){const e=$('toast');e.textContent=s;e.classList.add('show');clearTimeout(say.timer);say.timer=setTimeout(()=>e.classList.remove('show'),3000)}
 function setState(s,bad=false){const e=$('saveState');e.textContent=s;e.style.color=bad?'#b24335':'#5c7865'}
+/* v1.2a: 保存失敗した変更が1件でも残れば、「保存済み」を表示しない。
+   作品IDごとの世代を持ち、古い書き込みの完了で最新編集を保存済みと誤認しない。 */
+const pendingWorkSaves=new Set(),failedWorkSaves=new Set(),workSaveVersions=new Map();
+let pendingGlobalNote=false,failedGlobalNote=false,failedConflictSave=false,globalNoteVersion=0;
+function hasLocalSaveRisk(){return !!(pendingWorkSaves.size||failedWorkSaves.size||pendingGlobalNote||failedGlobalNote||failedConflictSave)}
+function refreshLocalSaveState(){
+  if(failedWorkSaves.size||failedGlobalNote||failedConflictSave){setState('⚠ 端末保存失敗：原稿を書き出してね',true);return}
+  if(pendingWorkSaves.size||pendingGlobalNote){setState('端末に保存中…');return}
+  setState('この端末に保存済み');
+}
+function showLocalSaveFailure(detail='原稿の保存に失敗したよ'){
+  refreshLocalSaveState();
+  say(detail+'。画面を閉じず、.txtか暗号化バックアップで確保してね');
+}
+
 function openDB(){return new Promise((resolve,reject)=>{if(!indexedDB)return reject(new Error('IndexedDB非対応'));const q=indexedDB.open(DB_NAME,1);q.onupgradeneeded=()=>{const d=q.result;d.createObjectStore('works',{keyPath:'id'});d.createObjectStore('history',{keyPath:'id'});d.createObjectStore('settings',{keyPath:'key'})};q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)})}
 function txRead(store,method,arg){return new Promise((resolve,reject)=>{const x=db.transaction(store,'readonly');const q=x.objectStore(store)[method](arg);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)})}
 function txWrite(store,method,arg){return new Promise((resolve,reject)=>{const x=db.transaction(store,'readwrite');const q=x.objectStore(store)[method](arg);x.oncomplete=()=>resolve(q.result);x.onerror=()=>reject(x.error||q.error);x.onabort=()=>reject(x.error||new Error('保存中断'))})}
@@ -383,8 +398,43 @@ function discardUnusedStarter(){
 function normalWork(w){return {id:String(w.id||uuid()),title:String(w.title||DEFAULT_TITLE),text:String(w.text||''),rubies:Array.isArray(w.rubies)?w.rubies.filter(r=>Number.isInteger(r.start)&&Number.isInteger(r.end)&&r.end>r.start&&r.end<=String(w.text||'').length&&typeof r.reading==='string').map(r=>({start:r.start,end:r.end,reading:r.reading})):[],note:String(w.note||''),showTitle:w.showTitle!==false,kinsoku:!!w.kinsoku,horizontal:!!w.horizontal,updated:Number(w.updated)||Date.now()}}
 function updateStats(){const w=current();if(!w)return;const cnt=charLength(w.text);$('charCount').textContent=cnt.toLocaleString('ja-JP')+' 字';$('pageCount').textContent='原稿用紙 約 '+Math.max(1,Math.ceil(cnt/400)).toLocaleString('ja-JP')+' 枚'}
 function refreshWorkList(){const root=$('workList');root.replaceChildren();const all=[...works.values()].sort((a,b)=>b.updated-a.updated);for(const w of all){const b=document.createElement('button');b.type='button';b.className='work-card'+(w.id===currentId?' active':'');b.dataset.id=w.id;const ttl=document.createElement('span');ttl.className='work-card-title';ttl.textContent=w.title||DEFAULT_TITLE;const cap=document.createElement('span');cap.className='work-card-caption';cap.textContent=charLength(w.text).toLocaleString('ja-JP')+'字 ・ '+jpDate(w.updated);b.append(ttl,cap);b.addEventListener('click',()=>selectWork(w.id));root.append(b)}}
-function scheduleSave(){setState('端末に保存中…');clearTimeout(saveTimer);const id=currentId;saveTimer=setTimeout(()=>saveNow(id),450)}
-async function saveNow(id=currentId){if(!db||!works.has(id))return;if(isUnusedStarter(id))return;if(id===transientStarterId)transientStarterId=null;const data=structuredClone(works.get(id));try{await txWrite('works','put',data);lastSavedAt=Date.now();setState('この端末に保存済み');window.dispatchEvent(new CustomEvent('kotonoha:worksaved',{detail:{id}}));}catch(e){setState('保存できません！',true);say('保存に失敗。必ず書き出しで原稿を確保してね')}}
+function scheduleSave(){
+  const id=currentId;
+  if(!id||isUnusedStarter(id))return;
+  workSaveVersions.set(id,(workSaveVersions.get(id)||0)+1);
+  pendingWorkSaves.add(id);
+  refreshLocalSaveState();
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{saveNow(id)},450);
+}
+async function saveNow(id=currentId){
+  if(isUnusedStarter(id))return true;
+  if(!db||!works.has(id))return false;
+  if(id===transientStarterId)transientStarterId=null;
+  const version=workSaveVersions.get(id)||0;
+  const data=structuredClone(works.get(id));
+  pendingWorkSaves.add(id);
+  refreshLocalSaveState();
+  try{
+    await txWrite('works','put',data);
+    lastSavedAt=Date.now();
+    // この書き込み中に次の編集があれば、古い結果を「最新の保存成功」と扱わない。
+    const isLatest=(workSaveVersions.get(id)===version);
+    if(isLatest){
+      failedWorkSaves.delete(id);
+      pendingWorkSaves.delete(id);
+      window.dispatchEvent(new CustomEvent('kotonoha:worksaved',{detail:{id}}));
+    }
+    refreshLocalSaveState();
+    return isLatest;
+  }catch(e){
+    console.error('作品の端末保存失敗',e);
+    failedWorkSaves.add(id);
+    pendingWorkSaves.add(id);
+    showLocalSaveFailure();
+    return false;
+  }
+}
 /* v0.8: 本文＋ルビの直前編集だけを端末のメモリに保持する。
    ブラウザの textarea 履歴はページ分割やスタイル切替で消えるため、作品モデルを正とする。
    この履歴は同期しない／再読み込み後は空。端末の復元履歴とは別。 */
@@ -1344,17 +1394,103 @@ function wireNative(el){
  });
 }
 function renderRubyList(){const w=current();if(!w)return;const root=$('rubyList');root.replaceChildren();$('rubyCount').textContent=w.rubies.length;if(!w.rubies.length){const s=document.createElement('span');s.className='empty-note';s.textContent='まだルビはありません';root.append(s);return}for(const [i,r]of w.rubies.entries()){const row=document.createElement('div');row.className='ruby-item';const ruby=document.createElement('ruby');ruby.textContent=w.text.slice(r.start,r.end);const rt=document.createElement('rt');rt.textContent=r.reading;ruby.append(rt);const b=document.createElement('button');b.textContent='削除';b.title='このルビだけ外す';b.addEventListener('click',()=>{w.rubies.splice(i,1);change();renderAll();say('ルビを外したよ')});row.append(ruby,b);root.append(row)}}
-async function selectWork(id){if(!works.has(id)||id===currentId)return;clearTimeout(saveTimer);if(current()){await checkpoint(current());await saveNow(currentId)}discardUnusedStarter();currentId=id;renderAll();refreshWorkList();try{localStorage.setItem('kotonoha-current-id',id)}catch(e){}}
+async function selectWork(id){
+  if(!works.has(id)||id===currentId)return;
+  clearTimeout(saveTimer);
+  if(current()){
+    await checkpoint(current());
+    if(!await saveNow(currentId)){
+      showLocalSaveFailure('作品を切り替えずに止めたよ。現在の作品が端末に保存できていない');
+      return;
+    }
+  }
+  discardUnusedStarter();currentId=id;renderAll();refreshWorkList();
+  try{localStorage.setItem('kotonoha-current-id',id)}catch(e){}
+}
 let globalNote='';
-async function createWork(){clearTimeout(saveTimer);if(current()){await checkpoint(current());await saveNow(currentId)}discardUnusedStarter();const w=makeWork();works.set(w.id,w);currentId=w.id;renderAll();refreshWorkList();scheduleSave();$('workTitle').focus();$('workTitle').select();}
-async function saveGlobalNote(){if(!db)return;try{await txWrite('settings','put',{key:'globalNote',value:globalNote});setState('この端末に保存済み');window.dispatchEvent(new Event('kotonoha:notesaved'))}catch(e){setState('メモ保存失敗',true)}}
+async function createWork(){
+  clearTimeout(saveTimer);
+  if(current()){
+    await checkpoint(current());
+    if(!await saveNow(currentId)){
+      showLocalSaveFailure('新規作品の作成を止めたよ。現在の作品が端末に保存できていない');
+      return;
+    }
+  }
+  discardUnusedStarter();const w=makeWork();works.set(w.id,w);currentId=w.id;
+  renderAll();refreshWorkList();scheduleSave();$('workTitle').focus();$('workTitle').select();
+}
+async function saveGlobalNote(){
+  if(!db)return false;
+  const version=globalNoteVersion,value=globalNote;
+  pendingGlobalNote=true;refreshLocalSaveState();
+  try{
+    await txWrite('settings','put',{key:'globalNote',value});
+    failedGlobalNote=false;
+    if(version===globalNoteVersion){
+      pendingGlobalNote=false;
+      window.dispatchEvent(new Event('kotonoha:notesaved'));
+    }
+    refreshLocalSaveState();
+    return true;
+  }catch(e){
+    console.error('共通メモの端末保存失敗',e);
+    pendingGlobalNote=true;failedGlobalNote=true;
+    showLocalSaveFailure('共通メモの保存に失敗したよ');
+    return false;
+  }
+}
 async function showHistory(){const all=(await txRead('history','getAll')).filter(x=>x.workId===currentId).sort((a,b)=>b.time-a.time);const root=$('historyList');root.replaceChildren();if(!all.length){root.textContent='まだ復元履歴はありません。文章を編集してしばらくすると記録されるよ。'}for(const h of all){const row=document.createElement('div');row.className='history-row';const label=document.createElement('span');label.textContent=jpDate(h.time)+' ・ '+charLength(h.text)+' 字';const b=document.createElement('button');b.textContent='この版に戻す';b.addEventListener('click',async()=>{if(!confirm('現在の文章をこの履歴に置き換える？'))return;await checkpoint(current());const w=current();w.text=h.text;w.rubies=h.rubies;w.note=h.note;change();renderAll();$('historyDialog').close();say('履歴から復元したよ')});row.append(label,b);root.append(row)}$('historyDialog').showModal()}
 function download(filename,body,type='application/octet-stream'){const blob=body instanceof Blob?body:new Blob([body],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}
 function base64(bytes){let str='';for(let i=0;i<bytes.length;i+=8192)str+=String.fromCharCode(...bytes.slice(i,i+8192));return btoa(str)}
 function unbase64(str){return Uint8Array.from(atob(str),c=>c.charCodeAt(0))}
 async function passphraseKey(pass,salt){const raw=await crypto.subtle.importKey('raw',new TextEncoder().encode(pass),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:350000,hash:'SHA-256'},raw,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
 async function encryptedExport(data,name){if(!crypto?.subtle){say('暗号化機能が使えません。HTTPSの公開URLから開いてね');return}const p=prompt('バックアップを暗号化するための長いパスフレーズを入力してね（12文字以上）。忘れると復元できません。');if(p===null)return;if(p.length<12){say('パスフレーズは12文字以上にしてね');return}const verify=prompt('確認のため、もう一度入力してね');if(verify!==p){say('入力が一致しなかったよ');return}try{const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));const key=await passphraseKey(p,salt);const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify(data)));download(name+'.encrypted.json',JSON.stringify({format:'kotonoha-encrypted-v1',iterations:350000,salt:base64(salt),iv:base64(iv),ciphertext:base64(new Uint8Array(ct))},null,2),'application/json');say('暗号化バックアップを書き出したよ')}catch(e){say('バックアップの暗号化に失敗したよ')}}
-async function importBackup(file){let obj;try{obj=JSON.parse(await file.text());if(obj.format==='kotonoha-encrypted-v1'){if(!crypto?.subtle)throw new Error('HTTPSが必要');const pw=prompt('バックアップのパスフレーズを入力してね');if(pw===null)return;const key=await passphraseKey(pw,unbase64(obj.salt));const bytes=await crypto.subtle.decrypt({name:'AES-GCM',iv:unbase64(obj.iv)},key,unbase64(obj.ciphertext));obj=JSON.parse(new TextDecoder().decode(bytes))}if(obj.format!=='kotonoha-backup-v1'||!Array.isArray(obj.works))throw new Error('対応していない形式');const incoming=obj.works.slice(0,300).map(normalWork);if(!confirm(`${incoming.length}作品を新しい作品として取り込むよ。今の作品は残すけど、続ける？`))return;discardUnusedStarter();for(const w of incoming){w.id=uuid();w.title+='（復元）';works.set(w.id,w);await txWrite('works','put',w)}if(typeof obj.globalNote==='string'&&obj.globalNote){globalNote=[globalNote,obj.globalNote].filter(Boolean).join('\n\n--- 復元した共通メモ ---\n');await saveGlobalNote()}currentId=incoming.at(0)?.id||currentId;renderAll();refreshWorkList();say(incoming.length+'作品を復元したよ')}catch(e){say('復元できなかったよ。形式かパスフレーズを確認してね')}}
+function writeRestoredBatch(incoming, mergedNote){
+  return new Promise((resolve,reject)=>{
+    const stores=mergedNote===null?['works']:['works','settings'];
+    const transaction=db.transaction(stores,'readwrite');
+    const worksStore=transaction.objectStore('works');
+    for(const work of incoming)worksStore.put(work);
+    if(mergedNote!==null)transaction.objectStore('settings').put({key:'globalNote',value:mergedNote});
+    transaction.oncomplete=()=>resolve();
+    transaction.onerror=()=>reject(transaction.error||new Error('復元保存エラー'));
+    transaction.onabort=()=>reject(transaction.error||new Error('復元保存が中断されました'));
+  });
+}
+async function importBackup(file){
+  if(hasLocalSaveRisk()){say('端末に未保存の変更があるよ。保存完了後に復元してね');return}
+  let obj;
+  try{
+    obj=JSON.parse(await file.text());
+    if(obj.format==='kotonoha-encrypted-v1'){
+      if(!crypto?.subtle)throw new Error('HTTPSが必要');
+      const pw=prompt('バックアップのパスフレーズを入力してね');
+      if(pw===null)return;
+      const key=await passphraseKey(pw,unbase64(obj.salt));
+      const bytes=await crypto.subtle.decrypt({name:'AES-GCM',iv:unbase64(obj.iv)},key,unbase64(obj.ciphertext));
+      obj=JSON.parse(new TextDecoder().decode(bytes));
+    }
+    if(obj.format!=='kotonoha-backup-v1'||!Array.isArray(obj.works))throw new Error('対応していない形式');
+    const incoming=obj.works.slice(0,300).map(normalWork);
+    if(!confirm(`${incoming.length}作品を新しい作品として取り込むよ。今の作品は残すけど、続ける？`))return;
+    for(const w of incoming){w.id=uuid();w.title+='（復元）';}
+    const newNote=(typeof obj.globalNote==='string'&&obj.globalNote)
+      ?[globalNote,obj.globalNote].filter(Boolean).join('\n\n--- 復元した共通メモ ---\n')
+      :null;
+    // どれか1件でも保存できなければ全体をロールバック。
+    await writeRestoredBatch(incoming,newNote);
+    discardUnusedStarter();
+    for(const w of incoming)works.set(w.id,w);
+    if(newNote!==null){globalNote=newNote;if(noteMode==='global')$('noteText').value=globalNote;}
+    currentId=incoming.at(0)?.id||currentId;
+    renderAll();refreshWorkList();refreshLocalSaveState();
+    say(incoming.length+'作品の復元が端末に保存されたよ');
+  }catch(e){
+    console.error('バックアップ復元失敗',e);
+    say('復元失敗。作品を一部だけ追加しないよう処理を中断したよ。元のファイルを保管してね');
+  }
+}
 function escXML(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;')}
 function docxParagraphs(w){const boldTag='<w:rPr><w:rFonts w:ascii="Yu Mincho" w:eastAsia="Yu Mincho"/><w:b/></w:rPr>';const run=(t)=>'<w:r><w:rPr><w:rFonts w:ascii="Yu Mincho" w:eastAsia="Yu Mincho"/></w:rPr><w:t xml:space="preserve">'+escXML(t)+'</w:t></w:r>';const ruby=(base,reading)=>'<w:ruby><w:rubyPr><w:rubyAlign w:val="center"/><w:hps w:val="12"/><w:hpsRaise w:val="15"/><w:hpsBaseText w:val="22"/></w:rubyPr><w:rt>'+run(reading)+'</w:rt><w:rubyBase>'+run(base)+'</w:rubyBase></w:ruby>';
  let out='<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>'+boldTag+'<w:t>'+escXML(w.title)+'</w:t></w:r></w:p>';let cur=0;for(const line of w.text.split('\n')){const st=cur,end=cur+line.length;const rs=w.rubies.filter(r=>r.start>=st&&r.end<=end).sort((a,b)=>a.start-b.start);let pos=st,contents='';for(const r of rs){if(r.start<pos)continue;if(r.start>pos)contents+=run(w.text.slice(pos,r.start));contents+=ruby(w.text.slice(r.start,r.end),r.reading);pos=r.end}if(pos<end)contents+=run(w.text.slice(pos,end));out+='<w:p>'+contents+'</w:p>';cur=end+1}return out}
@@ -1534,7 +1670,7 @@ if(nativeInPlace){
    setCaretFromTap(t,e.clientX,e.clientY);
   });
  }else wireEditor($('bookEditor'));
-$('noteText').addEventListener('input',e=>{if(noteMode==='work'){current().note=e.target.value;change()}else{globalNote=e.target.value;setState('端末に保存中…');clearTimeout(saveGlobalNote.timer);saveGlobalNote.timer=setTimeout(saveGlobalNote,400)}});
+$('noteText').addEventListener('input',e=>{if(noteMode==='work'){current().note=e.target.value;change()}else{globalNote=e.target.value;globalNoteVersion++;pendingGlobalNote=true;refreshLocalSaveState();clearTimeout(saveGlobalNote.timer);saveGlobalNote.timer=setTimeout(saveGlobalNote,400)}});
 document.querySelectorAll('.notes-tab').forEach(b=>b.addEventListener('click',()=>{noteMode=b.dataset.note;document.querySelectorAll('.notes-tab').forEach(x=>x.classList.toggle('active',x===b));$('noteText').value=noteMode==='work'?current().note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア'}));
 /* 選択範囲のコピー: 自前で作った選択にはiOS標準のコピーメニューが出ないため、ボタンで本文からコピーする。
    (pointerdownでフォーカスを奪わないので、キーボードを閉じなくても選択を保ったままコピーできる) */
@@ -1647,7 +1783,7 @@ $('rubyRemove').addEventListener('click',()=>{
  change();renderAll();say('選択範囲のルビを外したよ');
 });
 $('undoBody').addEventListener('click',()=>bodyUndoOrRedo(false));$('redoBody').addEventListener('click',()=>bodyUndoOrRedo(true));
-$('exportBtn').addEventListener('click',()=>$('exportDialog').showModal());$('backupTop').addEventListener('click',()=>exportBy('all'));document.querySelectorAll('[data-export]').forEach(e=>e.addEventListener('click',()=>exportBy(e.dataset.export)));$('importBtn').addEventListener('click',()=>$('importFile').click());$('importFile').addEventListener('change',async(e)=>{if(e.target.files?.[0])await importBackup(e.target.files[0]);e.target.value=''});$('deleteWork').addEventListener('click',async()=>{const w=current();if(!w||!confirm('「'+w.title+'」をこの端末から削除する？ この操作は取り消せません。\n先にバックアップを取るのがおすすめ。'))return;if(window.KotonohaCloud?.active?.()){const allowed=await window.KotonohaCloud.beforeDelete(w.id);if(!allowed){say('クラウドの状態を確認できないため削除しなかったよ');return}}clearTimeout(saveTimer);await txWrite('works','delete',w.id);works.delete(w.id);bodyUndoHistory.delete(w.id);if(!works.size){const fresh=makeWork('はじめての物語');works.set(fresh.id,fresh);transientStarterId=fresh.id}currentId=works.keys().next().value;renderAll();refreshWorkList();$('exportDialog').close();say('作品を削除したよ')});$('historyBtn').addEventListener('click',showHistory);$('closeHistory').addEventListener('click',()=>$('historyDialog').close());$('noticeClose').addEventListener('click',()=>$('safetyBanner').remove());
+$('exportBtn').addEventListener('click',()=>$('exportDialog').showModal());$('backupTop').addEventListener('click',()=>exportBy('all'));document.querySelectorAll('[data-export]').forEach(e=>e.addEventListener('click',()=>exportBy(e.dataset.export)));$('importBtn').addEventListener('click',()=>$('importFile').click());$('importFile').addEventListener('change',async(e)=>{if(e.target.files?.[0])await importBackup(e.target.files[0]);e.target.value=''});$('deleteWork').addEventListener('click',async()=>{const w=current();if(!w||hasLocalSaveRisk()){if(w)say('端末に未保存の変更があるため削除を止めたよ。先に書き出してね');return}if(!confirm('「'+w.title+'」をこの端末から削除する？ この操作は取り消せません。\n先にバックアップを取るのがおすすめ。'))return;if(window.KotonohaCloud?.active?.()){const allowed=await window.KotonohaCloud.beforeDelete(w.id);if(!allowed){say('クラウドの状態を確認できないため削除しなかったよ');return}}clearTimeout(saveTimer);await txWrite('works','delete',w.id);works.delete(w.id);bodyUndoHistory.delete(w.id);if(!works.size){const fresh=makeWork('はじめての物語');works.set(fresh.id,fresh);transientStarterId=fresh.id}currentId=works.keys().next().value;renderAll();refreshWorkList();$('exportDialog').close();say('作品を削除したよ')});$('historyBtn').addEventListener('click',showHistory);$('closeHistory').addEventListener('click',()=>$('historyDialog').close());$('noticeClose').addEventListener('click',()=>$('safetyBanner').remove());
 document.addEventListener('keydown',e=>{
  if(!(e.metaKey||e.ctrlKey)||e.altKey)return;
  const key=e.key.toLowerCase();
@@ -1661,7 +1797,15 @@ document.addEventListener('keydown',e=>{
  if(key==='y'&&e.shiftKey)return;
  e.preventDefault();bodyUndoOrRedo(redo);
 },true);
-window.addEventListener('beforeunload',()=>{if(current())saveNow(currentId)});
+window.addEventListener('beforeunload',e=>{
+  // unload中のIndexedDB書き込みは保証されない。警告を出し、別途バックアップを促す。
+  if(hasLocalSaveRisk()){e.preventDefault();e.returnValue='';}
+  if(current()&&pendingWorkSaves.has(currentId))void saveNow(currentId);
+});
+window.addEventListener('pagehide',()=>{
+  if(current()&&pendingWorkSaves.has(currentId))void saveNow(currentId);
+  if(pendingGlobalNote)void saveGlobalNote();
+});
 }
 
 /* v0.5: Screen preferences stay on THIS device only, never cloud-sync. */
@@ -1883,15 +2027,38 @@ window.KotonohaBridge={
   },
   conflictCopy:async work=>{
    const w=normalWork({...work,id:uuid(),title:String(work.title||DEFAULT_TITLE)+'（同期競合・保護コピー）',updated:Date.now()});
-   works.set(w.id,w);await txWrite('works','put',w);resetBodyHistory(w);
-   refreshWorkList();say('異なる編集を検出。競合コピーを保存したよ');
+    // 先にIndexedDBのトランザクション完了を確認。失敗したら同期コードに例外を返し、
+    // 元の原稿へのクラウド取込を開始させない。成功前に保護コピーを作品一覧へ出さない。
+    try{
+      await txWrite('works','put',w);
+    }catch(e){
+      console.error('同期競合コピーの端末保存失敗',e);
+      failedConflictSave=true;
+      showLocalSaveFailure('競合コピーを端末に保存できなかったので同期を中断したよ');
+      const err=new Error('競合コピーの端末保存に失敗。元の原稿は画面上に残しているので書き出してね');
+      err.code='local-save-failed';
+      throw err;
+    }
+    failedConflictSave=false;refreshLocalSaveState();
+    works.set(w.id,w);resetBodyHistory(w);
+    refreshWorkList();say('異なる編集を検出。競合コピーを端末に保存したよ');
    return w.id;
   },
   setNote:async text=>{
-   globalNote=String(text);await txWrite('settings','put',{key:'globalNote',value:globalNote});
+    if(pendingGlobalNote||failedGlobalNote)throw new Error('共通メモの端末保存が完了するまで受信を保留したよ');
+    const value=String(text);
+    try{await txWrite('settings','put',{key:'globalNote',value})}
+    catch(e){
+      failedGlobalNote=true;
+      showLocalSaveFailure('受信した共通メモの保存に失敗したよ');
+      throw e;
+    }
+    globalNote=value;
+    failedGlobalNote=false;
+    pendingGlobalNote=false;
+    refreshLocalSaveState();
    if(noteMode==='global')$('noteText').value=globalNote;
-  },
-  editableFocused:()=>{
+  },  editableFocused:()=>{
    const e=document.activeElement;
    return !!(e && (e.classList.contains('half')||e.id==='bookEditor'||e.id==='workTitle'||e.id==='noteText'));
   },
