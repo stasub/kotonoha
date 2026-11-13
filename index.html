@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">保存誤判定対策 v1.2b（Claude入力版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">縮小時スクロール調整 v1.2c（Claude入力版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1182,7 +1182,15 @@ function nativeBoundaryDelete(el,direction){
    document 全体の強制縦スクロールを、単行本モードの入力時に限って抑制。
    文章の横スクロール・ユーザーが指で行う縦スクロール・IME/入力位置には介入しない。 */
 const tankPageScroll={anchor:0,until:0,moving:false,startY:null,startX:null,timer:0,frame:0};
-function isTankNativeEditor(el){return nativeInPlace&&!!el&&(el.id==='bookEditor'||!!el.classList?.contains('half'))}
+/* v1.2c: 原稿用紙を縮小したときのiOSキーボード自動スクロールを優先。
+   縮小時にwindow.scrollToによるページ位置復元を繰り返すと、
+   WebKitのキャレット追従と競合して入力のたびに画面が上下に跳ねる場合がある。
+   100%以上の原稿用紙、および単行本・文庫本の従来挙動は維持する。 */
+function isTankNativeEditor(el){
+ if(!nativeInPlace||!el)return false;
+ if(el.id==='bookEditor')return true;
+ return !!el.classList?.contains('half')&&paperViewScale()>=1;
+}
 function tankScrollBegin(el){
  if(!isTankNativeEditor(el))return;
  tankPageScroll.anchor=window.scrollY;
