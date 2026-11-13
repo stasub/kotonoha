@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">縮小時スクロール調整 v1.2c（Claude入力版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">PDF書き出しβ v1.2d（Claude入力版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -302,7 +302,7 @@ html{scroll-padding-top:64px}
   <div class="ruby-list-head">この作品のルビ <span id="rubyCount">0</span></div><div id="rubyList" class="ruby-list"><span class="empty-note">まだルビはありません</span></div>
 </aside>
 </div>
-<dialog id="exportDialog"><form method="dialog" class="dialog-body"><h2>書き出し</h2><p>現在の作品をファイルに保存するよ</p><div class="dialog-actions-col"><button type="button" data-export="pdf">PDF（印刷画面から保存）</button><button type="button" data-export="docx">Word / Pages（.docx）</button><button type="button" data-export="txt">テキスト（.txt）</button><button type="button" data-export="json">この作品の暗号化バックアップ（.json）</button><button type="button" data-export="all">全作品の暗号化バックアップ（.json）</button><button type="button" id="deleteWork" style="color:#a04c3c">現在の作品を削除</button></div><button value="cancel" formnovalidate class="cancel-dialog">閉じる</button></form></dialog>
+<dialog id="exportDialog"><form method="dialog" class="dialog-body"><h2>書き出し</h2><p>現在の作品をファイルに保存するよ</p><div class="dialog-actions-col"><button type="button" data-export="pdf">PDF（直接書き出し・ページ番号付き β）</button><button type="button" data-export="pdf-print">PDF（従来の印刷画面から保存）</button><button type="button" data-export="docx">Word / Pages（.docx）</button><button type="button" data-export="txt">テキスト（.txt）</button><button type="button" data-export="json">この作品の暗号化バックアップ（.json）</button><button type="button" data-export="all">全作品の暗号化バックアップ（.json）</button><button type="button" id="deleteWork" style="color:#a04c3c">現在の作品を削除</button></div><button value="cancel" formnovalidate class="cancel-dialog">閉じる</button></form></dialog>
 <dialog id="rubyDialog"><form method="dialog" id="rubyForm" class="dialog-body"><h2>ルビを付ける</h2><p><strong id="rubyBaseText">選択語</strong> にだけ読みを付けるよ</p><label for="rubyTarget">ルビを付ける言葉（選択できない場合は入力）</label><input id="rubyTarget" maxlength="100" placeholder="例：蜃気楼" required><label for="rubyOccurrence" id="rubyOccurrenceLabel" hidden>どの箇所に付ける？</label><select id="rubyOccurrence" hidden></select><label for="rubyReading">読みがな</label><input id="rubyReading" maxlength="80" placeholder="例：しんきろう" required><div class="dialog-footer"><button value="cancel" formnovalidate class="secondary">キャンセル</button><button id="rubySubmit" type="submit" value="ok" class="primary">追加する</button></div></form></dialog>
 <dialog id="historyDialog"><div class="dialog-body"><h2>端末内の復元履歴</h2><p>復元すると現在の文章は変更されるので、念のためバックアップも取ってね。</p><div id="historyList" class="history-list"></div><button id="closeHistory" class="secondary">閉じる</button></div></dialog>
 <input type="file" id="importFile" accept=".json,application/json" hidden>
@@ -1519,8 +1519,234 @@ function escXML(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;
 function docxParagraphs(w){const boldTag='<w:rPr><w:rFonts w:ascii="Yu Mincho" w:eastAsia="Yu Mincho"/><w:b/></w:rPr>';const run=(t)=>'<w:r><w:rPr><w:rFonts w:ascii="Yu Mincho" w:eastAsia="Yu Mincho"/></w:rPr><w:t xml:space="preserve">'+escXML(t)+'</w:t></w:r>';const ruby=(base,reading)=>'<w:ruby><w:rubyPr><w:rubyAlign w:val="center"/><w:hps w:val="12"/><w:hpsRaise w:val="15"/><w:hpsBaseText w:val="22"/></w:rubyPr><w:rt>'+run(reading)+'</w:rt><w:rubyBase>'+run(base)+'</w:rubyBase></w:ruby>';
  let out='<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>'+boldTag+'<w:t>'+escXML(w.title)+'</w:t></w:r></w:p>';let cur=0;for(const line of w.text.split('\n')){const st=cur,end=cur+line.length;const rs=w.rubies.filter(r=>r.start>=st&&r.end<=end).sort((a,b)=>a.start-b.start);let pos=st,contents='';for(const r of rs){if(r.start<pos)continue;if(r.start>pos)contents+=run(w.text.slice(pos,r.start));contents+=ruby(w.text.slice(r.start,r.end),r.reading);pos=r.end}if(pos<end)contents+=run(w.text.slice(pos,end));out+='<w:p>'+contents+'</w:p>';cur=end+1}return out}
 async function downloadDocx(){if(typeof JSZip==='undefined'){say('Word書き出しに必要なライブラリがないよ');return}try{const w=current(),z=new JSZip();const vert=activeStyle!=='manu'||!w.horizontal;const sec=vert?'<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:textDirection w:val="tbRl"/></w:sectPr>':'<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>';z.file('[Content_Types].xml','<?xml version="1.0" encoding="utf-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');z.file('_rels/.rels','<?xml version="1.0" encoding="utf-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');z.file('word/document.xml','<?xml version="1.0" encoding="utf-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+docxParagraphs(w)+sec+'</w:body></w:document>');download(cleanName(w.title)+'.docx',await z.generateAsync({type:'blob'}));say('Wordファイルを書き出したよ。ルビの互換性はアプリで確認してね')}catch(e){say('Word書き出しに失敗したよ')}}
+/* v1.2d (PDF beta): standalone export renderer. NEVER changes work/selection/storage/sync.
+   Canvas drawing happens entirely on-device; no external script or network request.
+   Image-based PDF: print/page preview is preserved, PDF text is not searchable. */
+const KOTO_PDF_PRESETS={
+ tank:{name:'単行本',width:148,height:210,rows:40,columns:18,left:18,right:20,top:19,bottom:17},
+ bunko:{name:'文庫本',width:105,height:148,rows:38,columns:16,left:12,right:13,top:13,bottom:13},
+ manu:{name:'原稿用紙',width:297,height:210,rows:20,columns:20,left:30,right:29,top:18,bottom:18}
+};
+const KOTO_PDF_MIME='application/pdf';
+function kotoPdfPreset(kind){return KOTO_PDF_PRESETS[kind]||KOTO_PDF_PRESETS.manu}
+function kotoPdfLines(work,preset){
+ return layoutLines(String(work.text||''),preset.rows,!!work.kinsoku);
+}
+function kotoPdfPages(work,kind){
+ const spec=kotoPdfPreset(kind),lines=kotoPdfLines(work,spec);
+ const pages=[];
+ for(let i=0;i<Math.max(1,lines.length);i+=spec.columns)pages.push(lines.slice(i,i+spec.columns));
+ return pages;
+}
+function kotoPdfVChar(ch){
+ return ({'「':'﹁','」':'﹂','『':'﹃','』':'﹄','（':'︵','）':'︶','【':'︻','】':'︼','［':'﹇','］':'﹈','〈':'︿','〉':'﹀','《':'︽','》':'︾','…':'⋮','‥':'︰','ー':'丨','―':'︱','—':'︱'})[ch]||ch;
+}
+function kotoPdfRuby(ctx,work,line,x,yStart,cellY,faceSize){
+ if(!Array.isArray(work.rubies)||!work.rubies.length)return;
+ const gg=graphemes(line.text),pos=[0];for(const c of gg)pos.push(pos.at(-1)+c.length);
+ for(const r of work.rubies){
+  if(!r||typeof r.start!=='number'||typeof r.end!=='number'||!r.reading)continue;
+  if(r.end<=line.start||r.start>=line.end)continue;
+  // Ruby spanning two vertical lines is clipped to the visible portion.
+  const first=Math.max(0,pos.findIndex(v=>line.start+v>=Math.max(line.start,r.start)));
+  const last=Math.max(first,pos.findIndex(v=>line.start+v>=Math.min(line.end,r.end)));
+  if(first===last)continue;
+  const n=graphemes(String(r.reading));if(!n.length)continue;
+  const total=Math.max(1,r.end-r.start);
+  const rel1=(line.start+pos[first]-r.start)/total,rel2=(line.start+pos[last]-r.start)/total;
+  const chars=n.slice(Math.max(0,Math.floor(rel1*n.length)),Math.min(n.length,Math.ceil(rel2*n.length)));
+  if(!chars.length)continue;
+  const mid=yStart+(first+last-1)*cellY/2;
+  const spacing=Math.min(cellY*.46,(Math.max(1,last-first)*cellY)/chars.length);
+  const f=Math.min(faceSize*.51,cellY*.51);
+  ctx.font=`${f}px "Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif`;
+  ctx.fillStyle='#a04c3c';
+  chars.forEach((c,i)=>ctx.fillText(c,x+faceSize*.69,mid+(i-(chars.length-1)/2)*spacing));
+  ctx.fillStyle='#302720';
+ }
+}
+function kotoPdfDrawBook(ctx,work,preset,lines,pageNum,total){
+ const s=preset,pW=s.width,pH=s.height;
+ ctx.fillStyle='#fffefa';ctx.fillRect(0,0,pW,pH);
+ ctx.fillStyle='#302720';ctx.textAlign='center';ctx.textBaseline='middle';
+ const regionW=pW-s.left-s.right,regionH=pH-s.top-s.bottom;
+ const stepX=regionW/s.columns,stepY=regionH/s.rows;
+ const f=Math.min(stepY*.89,stepX*.72);
+ for(let col=0;col<lines.length;col++){
+  const line=lines[col],chars=graphemes(line.text),x=pW-s.right-stepX*(col+.5);
+  for(let row=0;row<chars.length;row++){
+   const ch=kotoPdfVChar(chars[row]),y=s.top+stepY*(row+.5);
+   ctx.font=`${f}px "Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif`;
+   ctx.fillStyle='#302720';
+   // Hanging punctuation (if the active kinsoku algorithm adds one character).
+   const yy=row>=s.rows?s.top+stepY*(s.rows-.2):y;
+   ctx.fillText(ch,x,yy);
+  }
+  kotoPdfRuby(ctx,work,line,x,s.top+stepY*.5,stepY,f);
+ }
+ ctx.fillStyle='#776b61';ctx.font=`${Math.min(2.65,stepY*.67)}px "Yu Mincho","Hiragino Mincho ProN",serif`;
+ // Folio lives below the text region, not in the manuscript body.
+ ctx.fillText(String(pageNum),pW/2,pH-Math.max(4,s.bottom*.48));
+ ctx.textAlign='right';ctx.fillStyle='#a49b90';ctx.font='2.5px "Yu Mincho",serif';
+ ctx.fillText((work.title||'').slice(0,26),pW-s.right,s.top*.50);
+}
+function kotoPdfDrawManu(ctx,work,preset,lines,pageNum,total){
+ const s=preset,pW=s.width,pH=s.height,h=s.height-s.top-s.bottom;
+ ctx.fillStyle='#fffefa';ctx.fillRect(0,0,pW,pH);
+ const pitch=(pW-s.left-s.right-12)/20,cellW=pitch*.86,cellH=h/20;
+ const right=pW-s.right;
+ for(let col=0;col<20;col++){
+  const x=right-(col+1)*pitch-(col>=10?12:0),line=lines[col];
+  ctx.strokeStyle='#ca967d';ctx.lineWidth=.12;
+  for(let row=0;row<20;row++)ctx.strokeRect(x,s.top+cellH*row,cellW,cellH);
+  if(!line)continue;
+  ctx.fillStyle='#302720';ctx.textAlign='center';ctx.textBaseline='middle';
+  const chars=graphemes(line.text),f=Math.min(cellW*.77,cellH*.79);
+  for(let row=0;row<chars.length;row++){
+   ctx.font=`${f}px "Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif`;
+   const yy=s.top+cellH*(Math.min(row,19)+.5);
+   ctx.fillText(kotoPdfVChar(chars[row]),x+cellW*.5,yy);
+  }
+  kotoPdfRuby(ctx,work,line,x+cellW*.5,s.top+cellH*.5,cellH,f);
+ }
+ // Manuscript center gutter and title (visible only when requested).
+ ctx.fillStyle='#b58c7c';ctx.textAlign='center';ctx.textBaseline='middle';
+ const titleX=right-(10*pitch)-5;
+ ctx.fillRect(titleX-5.3,s.top,.20,h);
+ ctx.fillRect(titleX+5.3,s.top,.20,h);
+ if(work.showTitle!==false){
+  ctx.fillStyle='#91685a';ctx.font='4.0px "Yu Mincho",serif';
+  const words=graphemes(String(work.title||''));
+  const start=s.top+h/2-words.length*4.4/2;
+  words.slice(0,38).forEach((c,i)=>ctx.fillText(c,titleX,start+i*4.4));
+ }
+ ctx.fillStyle='#75665f';ctx.font='3.0px "Yu Mincho",serif';
+ ctx.fillText(String(pageNum),pW/2,pH-8);
+}
+function kotoPdfDrawManuHorizontal(ctx,work,preset,lines,pageNum,total){
+ const s=preset,pW=s.width,pH=s.height,regionW=pW-s.left-s.right;
+ ctx.fillStyle='#fffefa';ctx.fillRect(0,0,pW,pH);
+ const stepX=regionW/20,stepY=(pH-s.top-s.bottom-12)/20;
+ ctx.textAlign='center';ctx.textBaseline='middle';
+ for(let row=0;row<20;row++){
+  const line=lines[row],y=s.top+row*stepY+(row>=10?12:0);
+  ctx.strokeStyle='#ca967d';ctx.lineWidth=.12;
+  for(let col=0;col<20;col++)ctx.strokeRect(s.left+col*stepX,y,stepX,stepY);
+  if(!line)continue;
+  const chars=graphemes(line.text),font=Math.min(stepX*.76,stepY*.8);
+  ctx.font=`${font}px "Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif`;
+  ctx.fillStyle='#302720';
+  for(let col=0;col<chars.length;col++){
+   ctx.fillText(chars[col],s.left+stepX*(Math.min(col,19)+.5),y+stepY*.5);
+  }
+  if(Array.isArray(work.rubies))for(const r of work.rubies){
+   if(!r?.reading||r.start<line.start||r.end>line.end)continue;
+   const a=graphemes(line.text.slice(0,r.start-line.start)).length;
+   const b=graphemes(line.text.slice(0,r.end-line.start)).length;
+   ctx.font=`${Math.min(font*.44,2.5)}px "Yu Mincho",serif`;
+   ctx.fillStyle='#a04c3c';
+   ctx.fillText(String(r.reading),s.left+stepX*(a+b)/2,y+stepY*.13);
+   ctx.font=`${font}px "Yu Mincho","Hiragino Mincho ProN",serif`;
+   ctx.fillStyle='#302720';
+  }
+ }
+ if(work.showTitle!==false){
+  ctx.fillStyle='#91685a';ctx.font='3.6px "Yu Mincho",serif';
+  ctx.fillText(String(work.title||'').slice(0,48),pW/2,s.top+10*stepY+6);
+ }
+ ctx.fillStyle='#75665f';ctx.font='3.0px "Yu Mincho",serif';
+ ctx.fillText(String(pageNum),pW/2,pH-8);
+}
+function kotoPdfRenderCanvas(canvas,work,style,preset,lines,pageIndex,total){
+ // Max about 160 dpi. Reusing a single canvas keeps iPhone memory low.
+ const dpi=160,pxmm=dpi/25.4;
+ const W=Math.round(preset.width*pxmm),H=Math.round(preset.height*pxmm);
+ if(canvas.width!==W)canvas.width=W;if(canvas.height!==H)canvas.height=H;
+ const ctx=canvas.getContext('2d',{alpha:false});
+ if(!ctx)throw new Error('Canvasに対応していません');
+ ctx.setTransform(canvas.width/preset.width,0,0,canvas.height/preset.height,0,0);
+ if(style==='manu') { if(work.horizontal)kotoPdfDrawManuHorizontal(ctx,work,preset,lines,pageIndex+1,total); else kotoPdfDrawManu(ctx,work,preset,lines,pageIndex+1,total); }
+ else kotoPdfDrawBook(ctx,work,preset,lines,pageIndex+1,total);
+}
+function kotoPdfJpeg(canvas){return new Promise((resolve,reject)=>{
+ if(!canvas.toBlob)return reject(new Error('画像生成に対応していません'));
+ canvas.toBlob(b=>b?resolve(b):reject(new Error('画像生成ができませんでした')),'image/jpeg',.9);
+})}
+/* Minimal, fully local PDF 1.4 writer. One JPEG per page; no external dependencies.
+   PDF contains printable images; original Japanese text stays in the app for editing. */
+async function kotoPdfBuild(work,style,onProgress){
+ const s=kotoPdfPreset(style),pages=kotoPdfPages(work,style),count=pages.length;
+ const enc=new TextEncoder(),parts=[],offs=[0];let len=0;
+ const str=x=>enc.encode(x);
+ const push=part=>{const b=typeof part==='string'?str(part):part;parts.push(b);len+=b.byteLength};
+ const obj=(i,data)=>{offs[i]=len;push(`${i} 0 obj\n`);push(data);push('\nendobj\n')};
+ const totalObjects=2+count*3;
+ push('%PDF-1.4\n%Kotonoha\n');
+ obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+ obj(2,`<< /Type /Pages /Kids [${pages.map((_,i)=>`${3+i*3} 0 R`).join(' ')}] /Count ${count} >>`);
+ const canvas=document.createElement('canvas');
+ for(let i=0;i<count;i++){
+  const a=3+i*3,imageId=a+1,contentId=a+2;
+  const width=(s.width*72/25.4).toFixed(4),height=(s.height*72/25.4).toFixed(4);
+  obj(a,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /XObject << /Im0 ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+  kotoPdfRenderCanvas(canvas,work,style,s,pages[i],i,count);
+  const jpg=new Uint8Array(await (await kotoPdfJpeg(canvas)).arrayBuffer());
+  offs[imageId]=len;
+  push(`${imageId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${canvas.width} /Height ${canvas.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);
+  push(jpg);push('\nendstream\nendobj\n');
+  const commands=`q\n${width} 0 0 ${height} 0 0 cm\n/Im0 Do\nQ\n`;
+  obj(contentId,`<< /Length ${str(commands).length} >>\nstream\n${commands}endstream`);
+  if(onProgress)onProgress(i+1,count);
+  // Keep the interface responsive while generating longer novels.
+  if(i%3===2)await new Promise(resolve=>setTimeout(resolve,0));
+ }
+ canvas.width=0;canvas.height=0;
+ const xref=len;
+ push(`xref\n0 ${totalObjects+1}\n0000000000 65535 f \n`);
+ for(let i=1;i<=totalObjects;i++)push(`${String(offs[i]).padStart(10,'0')} 00000 n \n`);
+ push(`trailer\n<< /Size ${totalObjects+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+ return {blob:new Blob(parts,{type:KOTO_PDF_MIME}),pages:count};
+}
+function kotoPdfOffer(blob,filename,style,pages){
+ // On iOS installed PWAs a programmatic <a download> may show a preview instead of saving.
+ // Provide a fresh user gesture for native Share Sheet or the file link.
+ const isAppleMobile=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+ if(!isAppleMobile){download(filename,blob);say(`${pages}ページのPDFを書き出したよ`);return}
+ const prior=$('kotoPdfReady');if(prior)prior.remove();
+ const file=new File([blob],filename,{type:KOTO_PDF_MIME});
+ const url=URL.createObjectURL(blob);
+ const dlg=document.createElement('dialog');dlg.id='kotoPdfReady';
+ dlg.innerHTML='<div class="dialog-body"><h2>📄 PDFができたよ</h2><p id="kotoPdfDesc"></p><div class="dialog-actions-col"><button id="kotoPdfShare" type="button" class="primary">共有して「ファイルに保存」</button><a id="kotoPdfOpen" download="" style="display:block;text-decoration:none;background:#fffdf8;border:1px solid var(--border);padding:12px;border-radius:8px;color:var(--text);font-size:13px">PDFを開く・保存する</a></div><button id="kotoPdfClose" type="button" class="secondary">閉じる</button></div>';
+ document.body.appendChild(dlg);
+ dlg.querySelector('#kotoPdfDesc').textContent=`${pages}ページのPDF。iPhoneでは共有メニューの「ファイルに保存」を使ってね。`;
+ const link=dlg.querySelector('#kotoPdfOpen');link.href=url;link.download=filename;
+ const share=dlg.querySelector('#kotoPdfShare');
+ if(!navigator.canShare?.({files:[file]}))share.hidden=true;
+ else share.addEventListener('click',async()=>{
+  try{await navigator.share({files:[file],title:filename})}
+  catch(e){if(e.name!=='AbortError'){say('共有できない場合は「PDFを開く・保存する」を使ってね')}}
+ });
+ dlg.querySelector('#kotoPdfClose').onclick=()=>dlg.close();
+ dlg.addEventListener('close',()=>{URL.revokeObjectURL(url);dlg.remove()},{once:true});
+ dlg.showModal();
+}
+async function kotoPdfExport(){
+ const original=current();if(!original)return;
+ // Snapshot only; no edits to local DB, selection, undo history, or cloud sync.
+ const w={title:original.title,text:original.text,rubies:(original.rubies||[]).map(r=>({...r})),showTitle:original.showTitle,kinsoku:original.kinsoku,horizontal:original.horizontal};
+ const style=activeStyle,spec=kotoPdfPreset(style),estimate=kotoPdfPages(w,style).length;
+ if(estimate>90&&!confirm(`${estimate}ページのPDFを作るよ。iPhoneでは少し重くなる場合があるけど続ける？`))return;
+ if(estimate>450){say('450ページを超えるので端末負荷を避けて中断したよ。作品を分割して書き出してね');return}
+ try{
+  say(`${spec.name}PDF（${estimate}ページ）を作成中…`);
+  const result=await kotoPdfBuild(w,style,(p,total)=>{if(p%15===0)say(`PDF作成中：${p}/${total}ページ`)});
+  const fn=`${cleanName(w.title)}_${spec.name}_${result.pages}ページ.pdf`;
+  kotoPdfOffer(result.blob,fn,style,result.pages);
+ }catch(e){console.error('PDF書き出し失敗',e);say('PDFの生成に失敗したよ。原稿は変更されていません')}
+}
+
 function pdfPrint(){let old=$('dynamicPrintStyle');if(old)old.remove();const style=document.createElement('style');style.id='dynamicPrintStyle';const page=activeStyle==='tank'?'A5':activeStyle==='bunko'?'A6':'A4';style.textContent=`@media print{@page{size:${page} portrait;margin:6mm}}`;document.head.append(style);say('印刷画面で「PDFとして保存」を選んでね');setTimeout(()=>window.print(),150)}
-async function exportBy(kind){$('exportDialog').close();const w=current();if(!w)return;if(kind==='txt'){download(cleanName(w.title)+'.txt',w.title+'\n\n'+w.text,'text/plain;charset=utf-8');return}if(kind==='docx'){await downloadDocx();return}if(kind==='pdf'){pdfPrint();return}if(kind==='json'){await encryptedExport({format:'kotonoha-backup-v1',works:[structuredClone(w)],globalNote:''},cleanName(w.title)+'_バックアップ');return}if(kind==='all'){await encryptedExport({format:'kotonoha-backup-v1',works:[...works.values()].map(w=>structuredClone(w)),globalNote},'ことのは帖_全作品バックアップ');return}}
+async function exportBy(kind){$('exportDialog').close();const w=current();if(!w)return;if(kind==='txt'){download(cleanName(w.title)+'.txt',w.title+'\n\n'+w.text,'text/plain;charset=utf-8');return}if(kind==='docx'){await downloadDocx();return}if(kind==='pdf'){await kotoPdfExport();return}if(kind==='pdf-print'){pdfPrint();return}if(kind==='json'){await encryptedExport({format:'kotonoha-backup-v1',works:[structuredClone(w)],globalNote:''},cleanName(w.title)+'_バックアップ');return}if(kind==='all'){await encryptedExport({format:'kotonoha-backup-v1',works:[...works.values()].map(w=>structuredClone(w)),globalNote},'ことのは帖_全作品バックアップ');return}}
 function configure(){document.querySelectorAll('.mode').forEach(b=>b.addEventListener('click',()=>{if(activeStyle===b.dataset.style)return;const info=getSelectionOffsets();activeStyle=b.dataset.style;renderAll(info?.start??null);revealBookStart()}));
 $('newWork').addEventListener('click',createWork);$('workTitle').addEventListener('input',e=>{const w=current();w.title=e.target.value;document.querySelectorAll('.spine-name').forEach(n=>n.textContent=w.showTitle?w.title:'');change();refreshWorkList()});
 $('horizontal').addEventListener('change',e=>{current().horizontal=e.target.checked;change();renderAll()});$('showGutterTitle').addEventListener('change',e=>{current().showTitle=e.target.checked;change();renderAll()});$('kinsoku').addEventListener('change',e=>{current().kinsoku=e.target.checked;change();renderAll()});
