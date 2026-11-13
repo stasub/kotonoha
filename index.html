@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">PDF約物・矢印キー修正版 v1.2e</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">PDF句読点字形修正版 v1.2f</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1606,22 +1606,27 @@ function kotoPdfPages(work,kind){
 function kotoPdfVChar(ch){
  return ({'「':'﹁','」':'﹂','『':'﹃','』':'﹄','（':'︵','）':'︶','【':'︻','】':'︼','［':'﹇','］':'﹈','〈':'︿','〉':'﹀','《':'︽','》':'︾','…':'⋮','‥':'︰','ー':'丨','―':'︱','—':'︱'})[ch]||ch;
 }
-/* v1.2e: PDF専用の縦組約物。本文編集・IME側には影響させない。
-   Canvasフォントの縦組用グリフ差を避け、句点はマスの右上に配置。
-   二重感嘆符等は同じマスに2記号を均等配置してOS間のズレを防ぐ。 */
+/* v1.2f: PDF専用の句読点。v1.2eで手描きした「、」が別の文字に見えたため、
+   元の文字のグリフをCanvasに描き、実際のインク範囲だけ測って右上へ移す。
+   本文・IME・カーソル・同期・保存には一切触れない。 */
 function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH){
  const raw=String(original),normalized=raw.replace(/[\uFE0E\uFE0F]/g,'');
  const ch=['。','｡','、','‼','⁉','⁈','⁇'].includes(normalized)?normalized:raw;
- if(ch==='。'||ch==='｡'){
-  const r=Math.min(faceSize,cellW,cellH)*.105;
-  ctx.save();ctx.strokeStyle='#302720';ctx.lineWidth=Math.max(.11,r*.31);
-  ctx.beginPath();ctx.arc(x+Math.min(cellW*.27,faceSize*.32),y-Math.min(cellH*.29,faceSize*.36),r,0,Math.PI*2);
-  ctx.stroke();ctx.restore();return;
- }
- if(ch==='、'){
-  const z=Math.min(faceSize,cellW,cellH),cx=x+z*.27,cy=y-z*.27;
-  ctx.save();ctx.strokeStyle='#302720';ctx.lineWidth=Math.max(.15,z*.105);ctx.lineCap='round';
-  ctx.beginPath();ctx.moveTo(cx-z*.075,cy-z*.10);ctx.quadraticCurveTo(cx+z*.06,cy-z*.005,cx-z*.12,cy+z*.15);ctx.stroke();
+ if(ch==='。'||ch==='｡'||ch==='、'){
+  ctx.save();
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  const m=ctx.measureText(ch);
+  const valid=[m.actualBoundingBoxLeft,m.actualBoundingBoxRight,m.actualBoundingBoxAscent,m.actualBoundingBoxDescent]
+   .every(v=>Number.isFinite(v));
+  if(valid){
+   // TextMetrics are distances from textAlign/textBaseline, not the text's visible center.
+   const inkMidX=(m.actualBoundingBoxRight-m.actualBoundingBoxLeft)/2;
+   const inkMidY=(m.actualBoundingBoxDescent-m.actualBoundingBoxAscent)/2;
+   ctx.fillText(ch,x+cellW*.26-inkMidX,y-cellH*.27-inkMidY);
+  }else{
+   // Older browsers: native punctuation shape is still preferable to an artificial stroke.
+   ctx.fillText(ch,x+cellW*.40,y-cellH*.50);
+  }
   ctx.restore();return;
  }
  const pair=({'‼':'!!','⁉':'!?','⁈':'?!','⁇':'??'})[ch];
