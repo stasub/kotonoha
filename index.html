@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">PDF書き出しβ v1.2d（Claude入力版）</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">PDF約物・矢印キー修正版 v1.2e</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1342,13 +1342,77 @@ function wireHalfTouchSelect(el){
   lastTap={time:now,x:e.clientX,y:e.clientY,count:1};
  });
 }
+/* v1.2e: 物理キーボードの上下左右を、画面上の縦書き方向に一致させる。
+   横書き・IME変換中・Option/Command/Ctrl+矢印はブラウザ標準のまま。
+   本文は変更しない（caret/選択範囲だけを動かす）。 */
+function kotoVerticalArrow(el,e){
+ if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))return false;
+ if(e.metaKey||e.ctrlKey||e.altKey||e.isComposing||e.keyCode===229||
+    nativeComposing.has(el)||nativePending.has(el))return false;
+ if(activeStyle==='manu'&&current()?.horizontal)return false;
+ if(!current()||!el?.isConnected||!(el.classList.contains('half')||el.id==='bookEditor'))return false;
+ const book=el.id==='bookEditor',k=book?-1:halfEls.indexOf(el);
+ if(!book&&k<0)return false;
+ const offset=k<0?0:pieceTexts.slice(0,k).join('').length;
+ const text=current().text;
+ const l=offset+el.selectionStart,r=offset+el.selectionEnd;
+ const backwards=el.selectionDirection==='backward';
+ const earlier=e.key==='ArrowUp'||e.key==='ArrowRight';
+ // 選択中にShiftなしで移動した場合は、まず範囲の前/後ろに畳む。
+ const collapse=!e.shiftKey&&l!==r;
+ const head=collapse?(earlier?l:r):(backwards?l:r);
+ const anchor=e.shiftKey?(backwards?r:l):head;
+ const capacity=book?bookRowLimit(el):20;
+ const lines=layoutLines(text,capacity,!!current().kinsoku);
+ const point=displayPoint(lines,head,capacity);
+ let next=head;
+ if(!collapse){
+  if(e.key==='ArrowUp'||e.key==='ArrowDown'){
+   // Unicodeのサロゲートペア・結合文字を途中で分断しない。
+   if(e.key==='ArrowUp'){
+    const parts=graphemes(text.slice(0,head));next=Math.max(0,head-(parts.at(-1)||'').length);
+   }else{next=Math.min(text.length,head+(graphemes(text.slice(head))[0]||'').length)}
+  }else{
+   // 右へ = 一つ前の列、左へ = 次の列。同じ高さの文字に移動。
+   const col=point.col+(e.key==='ArrowRight'?-1:1);
+   if(col>=0&&col<lines.length){
+    const goal=(typeof el._kotoGoalRow==='number')?el._kotoGoalRow:point.row;
+    next=displayIndex(lines,col,goal);
+    el._kotoGoalRow=goal;
+   }
+  }
+ }
+ if(e.key==='ArrowUp'||e.key==='ArrowDown')el._kotoGoalRow=null;
+ e.preventDefault();
+ const [destIndex,destOff]=book?[-1,next]:locatePiece(next);
+ const dest=book?el:halfEls[destIndex];
+ if(!dest)return true;
+ if(e.shiftKey&&dest!==el)return true; // 別textareaを跨ぐ選択は安全のため行わない。
+ if(dest!==el){
+  dest._kotoGoalRow=el._kotoGoalRow;
+  caretIn(dest,destOff);
+  rememberedNativeSelection=null;
+  return true;
+ }
+ const local=book?next:next-offset;
+ try{
+  if(e.shiftKey){
+   const a=Math.max(0,anchor-offset),b=Math.max(0,local);
+   el.setSelectionRange(Math.min(a,b),Math.max(a,b),b<a?'backward':'forward');
+  }else{el.setSelectionRange(local,local);rememberedNativeSelection=null}
+ }catch(_){return true}
+ rememberNativeRange(el);
+ if(book){syncBookPreview();revealBookCaretIfNeeded()}
+ else syncNativeVisual(el);
+ return true;
+}
 function wireNative(el){
  wireTankPageScroll(el);
  if(el.classList.contains('half'))wireHalfTouchSelect(el);
  el.addEventListener('scroll',()=>{if(el.classList.contains('half'))resetScroll(el)});
  el.addEventListener('focus',()=>{syncNativeVisual(el)});
  let touchDown=null;
- el.addEventListener('pointerdown',e=>{if(e.pointerType==='touch'||e.pointerType==='pen')touchDown={x:e.clientX,y:e.clientY,time:performance.now()};});
+ el.addEventListener('pointerdown',e=>{el._kotoGoalRow=null;if(e.pointerType==='touch'||e.pointerType==='pen')touchDown={x:e.clientX,y:e.clientY,time:performance.now()};});
  el.addEventListener('pointerup',e=>{
   const down=touchDown;touchDown=null;
   if(!down||performance.now()-down.time>400||Math.hypot(down.x-e.clientX,down.y-e.clientY)>12)return;
@@ -1356,7 +1420,7 @@ function wireNative(el){
  });
  el.addEventListener('click',e=>{rememberNativeRange(el);if(e.detail&&e.detail===1)setCaretFromTap(el,e.clientX,e.clientY);syncNativeVisual(el)});
  el.addEventListener('select',()=>{rememberNativeRange(el);syncNativeVisual(el)});
- el.addEventListener('input',()=>{if(el.id!=='bookEditor')kickRepaint(el);else syncBookPreview()});
+ el.addEventListener('input',()=>{el._kotoGoalRow=null;if(el.id!=='bookEditor')kickRepaint(el);else syncBookPreview()});
  el.addEventListener('keyup',()=>{rememberNativeRange(el);syncNativeVisual(el)});
  el.addEventListener('touchend',()=>{rememberNativeRange(el);kickRepaint(el);requestAnimationFrame(()=>{rememberNativeRange(el);syncNativeVisual(el)})},{passive:true});
  el.addEventListener('compositionstart',()=>{
@@ -1407,6 +1471,7 @@ function wireNative(el){
  });
  el.addEventListener('keydown',e=>{
    if(nativeComposing.has(el)||nativePending.has(el)||e.isComposing||e.keyCode===229)return;
+   if(kotoVerticalArrow(el,e))return;
    if((e.key==='Backspace'||e.key==='Delete')&&nativeBoundaryDelete(el,e.key==='Backspace'?'backward':'forward'))e.preventDefault();
  });
  el.addEventListener('blur',()=>{
@@ -1541,6 +1606,34 @@ function kotoPdfPages(work,kind){
 function kotoPdfVChar(ch){
  return ({'「':'﹁','」':'﹂','『':'﹃','』':'﹄','（':'︵','）':'︶','【':'︻','】':'︼','［':'﹇','］':'﹈','〈':'︿','〉':'﹀','《':'︽','》':'︾','…':'⋮','‥':'︰','ー':'丨','―':'︱','—':'︱'})[ch]||ch;
 }
+/* v1.2e: PDF専用の縦組約物。本文編集・IME側には影響させない。
+   Canvasフォントの縦組用グリフ差を避け、句点はマスの右上に配置。
+   二重感嘆符等は同じマスに2記号を均等配置してOS間のズレを防ぐ。 */
+function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH){
+ const raw=String(original),normalized=raw.replace(/[\uFE0E\uFE0F]/g,'');
+ const ch=['。','｡','、','‼','⁉','⁈','⁇'].includes(normalized)?normalized:raw;
+ if(ch==='。'||ch==='｡'){
+  const r=Math.min(faceSize,cellW,cellH)*.105;
+  ctx.save();ctx.strokeStyle='#302720';ctx.lineWidth=Math.max(.11,r*.31);
+  ctx.beginPath();ctx.arc(x+Math.min(cellW*.27,faceSize*.32),y-Math.min(cellH*.29,faceSize*.36),r,0,Math.PI*2);
+  ctx.stroke();ctx.restore();return;
+ }
+ if(ch==='、'){
+  const z=Math.min(faceSize,cellW,cellH),cx=x+z*.27,cy=y-z*.27;
+  ctx.save();ctx.strokeStyle='#302720';ctx.lineWidth=Math.max(.15,z*.105);ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(cx-z*.075,cy-z*.10);ctx.quadraticCurveTo(cx+z*.06,cy-z*.005,cx-z*.12,cy+z*.15);ctx.stroke();
+  ctx.restore();return;
+ }
+ const pair=({'‼':'!!','⁉':'!?','⁈':'?!','⁇':'??'})[ch];
+ if(pair){
+  ctx.save();ctx.font=`${faceSize*.75}px "Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif`;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(pair[0],x-faceSize*.185,y);
+  ctx.fillText(pair[1],x+faceSize*.185,y);
+  ctx.restore();return;
+ }
+ ctx.fillText(kotoPdfVChar(ch),x,y);
+}
 function kotoPdfRuby(ctx,work,line,x,yStart,cellY,faceSize){
  if(!Array.isArray(work.rubies)||!work.rubies.length)return;
  const gg=graphemes(line.text),pos=[0];for(const c of gg)pos.push(pos.at(-1)+c.length);
@@ -1575,12 +1668,12 @@ function kotoPdfDrawBook(ctx,work,preset,lines,pageNum,total){
  for(let col=0;col<lines.length;col++){
   const line=lines[col],chars=graphemes(line.text),x=pW-s.right-stepX*(col+.5);
   for(let row=0;row<chars.length;row++){
-   const ch=kotoPdfVChar(chars[row]),y=s.top+stepY*(row+.5);
+   const ch=chars[row],y=s.top+stepY*(row+.5);
    ctx.font=`${f}px "Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif`;
    ctx.fillStyle='#302720';
    // Hanging punctuation (if the active kinsoku algorithm adds one character).
    const yy=row>=s.rows?s.top+stepY*(s.rows-.2):y;
-   ctx.fillText(ch,x,yy);
+   kotoPdfVerticalGlyph(ctx,ch,x,yy,f,stepX,stepY);
   }
   kotoPdfRuby(ctx,work,line,x,s.top+stepY*.5,stepY,f);
  }
@@ -1605,7 +1698,7 @@ function kotoPdfDrawManu(ctx,work,preset,lines,pageNum,total){
   for(let row=0;row<chars.length;row++){
    ctx.font=`${f}px "Yu Mincho","Hiragino Mincho ProN","Noto Serif CJK JP",serif`;
    const yy=s.top+cellH*(Math.min(row,19)+.5);
-   ctx.fillText(kotoPdfVChar(chars[row]),x+cellW*.5,yy);
+   kotoPdfVerticalGlyph(ctx,chars[row],x+cellW*.5,yy,f,cellW,cellH);
   }
   kotoPdfRuby(ctx,work,line,x+cellW*.5,s.top+cellH*.5,cellH,f);
  }
