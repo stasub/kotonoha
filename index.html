@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">PDF句読点字形修正版 v1.2f</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">PDF句読点右上修正版 v1.2g</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1606,9 +1606,11 @@ function kotoPdfPages(work,kind){
 function kotoPdfVChar(ch){
  return ({'「':'﹁','」':'﹂','『':'﹃','』':'﹄','（':'︵','）':'︶','【':'︻','】':'︼','［':'﹇','］':'﹈','〈':'︿','〉':'﹀','《':'︽','》':'︾','…':'⋮','‥':'︰','ー':'丨','―':'︱','—':'︱'})[ch]||ch;
 }
-/* v1.2f: PDF専用の句読点。v1.2eで手描きした「、」が別の文字に見えたため、
-   元の文字のグリフをCanvasに描き、実際のインク範囲だけ測って右上へ移す。
-   本文・IME・カーソル・同期・保存には一切触れない。 */
+/* v1.2g: PDF専用の句読点位置調整。
+   「、」「。」の本来の字形は変えず、各マスの右上をインク外接矩形で基準にする。
+   文字の中心に対する補正では機種・フォント差で右上へ届かないため、
+   Canvas TextMetrics の実際のインク右端と上端をマスの右上内側へ揃える。
+   本文・IME・矢印キー・保存・同期には一切触れない。 */
 function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH){
  const raw=String(original),normalized=raw.replace(/[\uFE0E\uFE0F]/g,'');
  const ch=['。','｡','、','‼','⁉','⁈','⁇'].includes(normalized)?normalized:raw;
@@ -1616,16 +1618,20 @@ function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH){
   ctx.save();
   ctx.textAlign='center';ctx.textBaseline='middle';
   const m=ctx.measureText(ch);
+  const inkWidth=m.actualBoundingBoxLeft+m.actualBoundingBoxRight;
+  const inkHeight=m.actualBoundingBoxAscent+m.actualBoundingBoxDescent;
   const valid=[m.actualBoundingBoxLeft,m.actualBoundingBoxRight,m.actualBoundingBoxAscent,m.actualBoundingBoxDescent]
-   .every(v=>Number.isFinite(v));
+   .every(v=>Number.isFinite(v)) && inkWidth>0 && inkHeight>0;
   if(valid){
-   // TextMetrics are distances from textAlign/textBaseline, not the text's visible center.
-   const inkMidX=(m.actualBoundingBoxRight-m.actualBoundingBoxLeft)/2;
-   const inkMidY=(m.actualBoundingBoxDescent-m.actualBoundingBoxAscent)/2;
-   ctx.fillText(ch,x+cellW*.26-inkMidX,y-cellH*.27-inkMidY);
+   // 右上から少しだけ余白を取る。右端=マス幅の94%、上端=マス高さの8%。
+   // m.actualBoundingBoxRight は fillText 基準点からインク右端への距離。
+   // m.actualBoundingBoxAscent は fillText 基準点からインク上端までの距離。
+   const inkRight=x+cellW*.5-cellW*.06;
+   const inkTop=y-cellH*.5+cellH*.08;
+   ctx.fillText(ch,inkRight-m.actualBoundingBoxRight,inkTop+m.actualBoundingBoxAscent);
   }else{
-   // Older browsers: native punctuation shape is still preferable to an artificial stroke.
-   ctx.fillText(ch,x+cellW*.40,y-cellH*.50);
+   // TextMetrics 非対応の場合も、句読点の字形そのものは変更しない。
+   ctx.fillText(ch,x+cellW*.40,y-cellH*.48);
   }
   ctx.restore();return;
  }
