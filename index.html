@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">PDF句読点右上調整 v1.2h</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">PDF縦書き表記調整 v1.2i</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1606,16 +1606,15 @@ function kotoPdfPages(work,kind){
 function kotoPdfVChar(ch){
  return ({'「':'﹁','」':'﹂','『':'﹃','』':'﹄','（':'︵','）':'︶','【':'︻','】':'︼','［':'﹇','］':'﹈','〈':'︿','〉':'﹀','《':'︽','》':'︾','…':'⋮','‥':'︰','ー':'丨','―':'︱','—':'︱'})[ch]||ch;
 }
-/* v1.2h: PDF専用・句読点の「実際に描かれたインク」をマスの右上へ揃える。
-   Safari / Mac / iPhone では Canvas TextMetrics と描画結果が一致しないことがある。
-   そのため句読点を一時Canvasに描き、透明部分を除いた字形だけを切り出す。
-   句読点の文字の形はフォントに任せ、表示上の右端・上端で位置合わせする。
-   執筆画面・カーソル・同期・保存は一切変更しない。 */
+/* v1.2i: PDF描画専用の縦書き表記補正。
+   1) 句読点は「マス枠の右端」ではなく本文の標準文字のインク右端へ揃える。
+   2) 波ダッシュを縦方向へ向ける。
+   3) 書籍モードのASCII英数字はCSS text-orientation:mixedに近づけて90度回転。
+   編集、カーソル、IndexedDB、同期、改ページ計算は一切変更しない。 */
 const KOTO_PDF_PUNCT_STAMPS=new Map();
 function kotoPdfPunctuationStamp(ch,font){
  const key=ch+'|'+font;
  if(KOTO_PDF_PUNCT_STAMPS.has(key))return KOTO_PDF_PUNCT_STAMPS.get(key);
- // PDF本体より高い解像度で描いて、機種ごとの実字形を捕まえる。
  const scale=10;
  const sizeMatch=/([0-9.]+)px/.exec(font);
  const f=sizeMatch?Number(sizeMatch[1]):8;
@@ -1637,22 +1636,28 @@ function kotoPdfPunctuationStamp(ch,font){
  KOTO_PDF_PUNCT_STAMPS.set(key,stamp);
  return stamp;
 }
-function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH){
+function kotoPdfStandardInk(font){
+ // 同じフォント・サイズで表示する全角の基準文字の右端と上端を使う。
+ // マス全体の右端は字面より外なので、そこに句読点を貼り付けない。
+ const ref=kotoPdfPunctuationStamp('漢',font);
+ if(!ref)return null;
+ const center=ref.canvas.width/(2*ref.scale);
+ return {right:(ref.x+ref.w)/ref.scale-center,top:ref.y/ref.scale-center};
+}
+function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH,bookMode=false){
  const raw=String(original),normalized=raw.replace(/[\uFE0E\uFE0F]/g,'');
  const ch=['。','｡','、','‼','⁉','⁈','⁇'].includes(normalized)?normalized:raw;
  if(ch==='。'||ch==='｡'||ch==='、'){
   const stamp=kotoPdfPunctuationStamp(ch,ctx.font);
   if(stamp){
-   // インクの外接矩形を、マスの「右上」の内側へ正確に配置する。
-   const drawnWidth=stamp.w/stamp.scale,drawnHeight=stamp.h/stamp.scale;
-   const right=x+cellW*.5-cellW*.07;
-   const top=y-cellH*.5+cellH*.085;
+   const ink=kotoPdfStandardInk(ctx.font);
+   const width=stamp.w/stamp.scale,height=stamp.h/stamp.scale;
+   // 句読点の右端を「漢」の右端に、上端を「漢」の上端に揃える。
+   const right=x+(ink?ink.right:faceSize*.40);
+   const top=y+(ink?ink.top:-faceSize*.44);
    ctx.drawImage(stamp.canvas,stamp.x,stamp.y,stamp.w,stamp.h,
-    right-drawnWidth,top,drawnWidth,drawnHeight);
-  }else{
-   // 万が一字形を取得できない環境では元の文字を描く。
-   ctx.fillText(ch,x,y);
-  }
+    right-width,top,width,height);
+  }else{ctx.fillText(ch,x+faceSize*.22,y-faceSize*.24)}
   return;
  }
  const pair=({'‼':'!!','⁉':'!?','⁈':'?!','⁇':'??'})[ch];
@@ -1661,6 +1666,21 @@ function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH){
   ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillText(pair[0],x-faceSize*.185,y);
   ctx.fillText(pair[1],x+faceSize*.185,y);
+  ctx.restore();return;
+ }
+ // 日本語の波ダッシュはPDFだけ横のまま描かれていたので90度回転する。
+ // 原稿用紙の「横書き」はこの関数を通らない。
+ if(bookMode && (ch==='〜'||ch==='～'||ch==='〰')){
+  ctx.save();ctx.translate(x,y);ctx.rotate(Math.PI/2);
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ch,0,0);
+  ctx.restore();return;
+ }
+ // ブラウザの書籍プレビューは text-orientation:mixed。
+ // Canvasの通常fillTextは英数字を直立させてしまうので、書籍PDFのみ横倒しにする。
+ // 原稿用紙（text-orientation:upright）は従来の1マス1字を維持。
+ if(bookMode && /^[\x21-\x7e]$/.test(ch)){
+  ctx.save();ctx.translate(x,y);ctx.rotate(Math.PI/2);
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ch,0,0);
   ctx.restore();return;
  }
  ctx.fillText(kotoPdfVChar(ch),x,y);
@@ -1704,7 +1724,7 @@ function kotoPdfDrawBook(ctx,work,preset,lines,pageNum,total){
    ctx.fillStyle='#302720';
    // Hanging punctuation (if the active kinsoku algorithm adds one character).
    const yy=row>=s.rows?s.top+stepY*(s.rows-.2):y;
-   kotoPdfVerticalGlyph(ctx,ch,x,yy,f,stepX,stepY);
+   kotoPdfVerticalGlyph(ctx,ch,x,yy,f,stepX,stepY,true);
   }
   kotoPdfRuby(ctx,work,line,x,s.top+stepY*.5,stepY,f);
  }
