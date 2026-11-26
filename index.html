@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">PDF縦書き表記調整 v1.2i</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">タップ選択改善 v1.2j</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -644,6 +644,8 @@ function caretIn(el,n){
    ruby/rtを本文のインライン組版に入れると、iOSで列が押し出され、
    IME変換中だけ文字・青いキャレット・ルビが異なる座標に飛ぶ。
    本文は素の文字だけを配置し、読みは行内の絶対位置へ重ねる。 */
+/* v1.2j: 縦書き用の括弧字形。保存文字列は変更しない。 */
+function kotoVerticalParen(ch){return ({'(':'︵',')':'︶','（':'︵','）':'︶'})[ch]||ch}
 function makeNativeVisualLines(value,start=0,end=0,rubies=[],origin=0,capacity=20,kinsoku=false){
  const frag=document.createDocumentFragment();
  const lines=layoutLines(value,capacity,kinsoku);
@@ -656,7 +658,7 @@ function makeNativeVisualLines(value,start=0,end=0,rubies=[],origin=0,capacity=2
    const ch=chs[gi];
    const cell=document.createElement('span');cell.className='editor-glyph';
    // 半角スペースは縦書きだと細く描かれて見えないのに、1文字分の枠を消費してしまう。表示だけ全角幅で描く(本文はそのまま)。
-   cell.textContent=(ch===' '||ch==='\u00a0')?'\u3000':ch;
+   cell.textContent=(ch===' '||ch==='\u00a0')?'\u3000':(activeStyle==='manu'&&current()?.horizontal?ch:kotoVerticalParen(ch));
    // 「…」「—」「〜」などは、縦書きの「正立」設定だと横向きのまま描かれる。この文字だけ縦書き混在設定にして縦用の形にする。
    if(/^[…‥⋯—―〜～]$/.test(ch))cell.classList.add('rot');
    if(pos<end&&pos+ch.length>start)cell.classList.add('marked-char');
@@ -811,10 +813,44 @@ function tapCaretIndex(el,clientX,clientY){
  const row=Math.max(0,Math.round((current()?.horizontal?clientX-b.left:clientY-b.top)/(cell*scale)));
  return displayIndex(layoutLines(el.value,20,!!current()?.kinsoku),col,row);
 }
+/* v1.2j: 語句選択はキャレットの挿入位置ではなく、実際に触れた文字で判定する。
+   文字の下半分をタップすると従来の挿入位置は次の文字になるため、
+   ダブルタップ時に1文字下へずれる問題を避ける。空白部分は選択しない。 */
+function tapGlyphIndex(el,x,y){
+ if(!el?.isConnected)return null;
+ const root=el.id==='bookEditor'?$('bookPreview'):el.closest('.half-slot')?.querySelector('.native-visual');
+ if(!root)return null;
+ const rows=el.id==='bookEditor'?bookRowLimit(el):20;
+ const lines=layoutLines(el.value,rows,!!current()?.kinsoku);
+ const cols=[...root.querySelectorAll(':scope > .editor-line')];
+ if(!cols.length)return null;
+ const horizontal=el.id!=='bookEditor'&&!!current()?.horizontal;
+ let col=-1,near=Infinity;
+ for(let i=0;i<cols.length;i++){
+  const r=cols[i].getBoundingClientRect();
+  const d=horizontal?(y<r.top?r.top-y:y>r.bottom?y-r.bottom:0)
+   :(x<r.left?r.left-x:x>r.right?x-r.right:0);
+  if(d<near){near=d;col=i}
+ }
+ if(col<0)return null;
+ const glyphs=[...cols[col].querySelectorAll(':scope > .editor-glyph')];
+ let row=-1,distance=Infinity;
+ for(let i=0;i<glyphs.length;i++){
+  const r=glyphs[i].getBoundingClientRect();
+  const d=horizontal?(x<r.left?r.left-x:x>r.right?x-r.right:0)
+   :(y<r.top?r.top-y:y>r.bottom?y-r.bottom:0);
+  if(d<distance){distance=d;row=i}
+ }
+ if(row<0)return null;
+ const r=glyphs[row].getBoundingClientRect();
+ // マス外の指を無理に近くの語句へ吸着させない。
+ if(distance>Math.max(7,(horizontal?r.width:r.height)*.32))return null;
+ return displayIndex(lines,col,row);
+}
 function setCaretFromTap(el,x,y){
  if(!el?.isConnected||nativeComposing.has(el)||nativePending.has(el))return;
  if(el._wordSelHold&&performance.now()<el._wordSelHold)return; // 原稿用紙: ダブルタップ/長押しの語句選択を保護
- if(el.id!=='bookEditor'&&el.selectionStart!==el.selectionEnd)return; // 原稿用紙の長押し選択は優先
+ // 語句選択保護中は上で return。普通の1回タップならネイティブの誤選択を解除して挿入位置へ。
  const idx=tapCaretIndex(el,x,y);
  try{el.focus({preventScroll:true});el.setSelectionRange(idx,idx)}catch(e){return}
  rememberedNativeSelection=null;syncNativeVisual(el);
@@ -1274,8 +1310,7 @@ function wireHalfTouchSelect(el){
   let start=pos,end=pos;
   if(typeof Intl.Segmenter==='function'){
    const words=[...new Intl.Segmenter('ja',{granularity:'word'}).segment(str)];
-   const w=words.find(x=>x.index<=pos&&pos<x.index+x.segment.length&&x.isWordLike)
-    ||words.findLast(x=>x.index+x.segment.length===pos&&x.isWordLike);
+   const w=words.find(x=>x.index<=pos&&pos<x.index+x.segment.length&&x.isWordLike);
    if(w){start=w.index;end=start+w.segment.length}
   }
   if(start===end){
@@ -1317,29 +1352,37 @@ function wireHalfTouchSelect(el){
   if(!touchy(e))return;
   sel=null;el._wordSelHold=0;
   if(press)clearTimeout(press.timer);
-  let index=-1;try{index=tapCaretIndex(el,e.clientX,e.clientY)}catch(_){}
+  let index=null;try{index=tapGlyphIndex(el,e.clientX,e.clientY)}catch(_){}
   // すでに選択済みの範囲の上を押した場合は、ネイティブのコピー等のメニューに任せる。
-  const inside=el.selectionStart!==el.selectionEnd&&index>=el.selectionStart&&index<=el.selectionEnd;
-  const rec={x:e.clientX,y:e.clientY,id:e.pointerId,index,fired:false,timer:0};
-  if(index>=0&&!inside)rec.timer=setTimeout(()=>{if(press===rec){rec.fired=pick(rec.index)}},480);
+  const inside=el.selectionStart!==el.selectionEnd&&index!==null&&index>=el.selectionStart&&index<el.selectionEnd;
+  const rec={x:e.clientX,y:e.clientY,id:e.pointerId,index,fired:false,timer:0,scrollY:window.scrollY,scrollTop:$('paperViewport').scrollTop};
+  if(index!==null&&!inside)rec.timer=setTimeout(()=>{if(press===rec&&document.visibilityState!=='hidden'&&Math.abs(window.scrollY-rec.scrollY)<2&&Math.abs($('paperViewport').scrollTop-rec.scrollTop)<2){rec.fired=pick(rec.index)}},620);
   press=rec;
  });
  el.addEventListener('pointermove',e=>{
-  if(press&&press.id===e.pointerId&&!press.fired&&Math.hypot(e.clientX-press.x,e.clientY-press.y)>12){clearTimeout(press.timer);press=null}
+  if(press&&press.id===e.pointerId&&!press.fired&&Math.hypot(e.clientX-press.x,e.clientY-press.y)>9){clearTimeout(press.timer);press=null;lastTap=null}
  });
- el.addEventListener('pointercancel',()=>{if(press&&!press.fired)clearTimeout(press.timer);press=null});
+ const cancelHalfPress=()=>{if(press)clearTimeout(press.timer);press=null;lastTap=null};
+ el.addEventListener('touchmove',e=>{
+  const t=e.touches[0];if(press&&t&&Math.hypot(t.clientX-press.x,t.clientY-press.y)>9)cancelHalfPress();
+ },{passive:true});
+ el.addEventListener('pointercancel',cancelHalfPress);
+ el.addEventListener('touchcancel',cancelHalfPress,{passive:true});
+ el.addEventListener('scroll',()=>{if(press)cancelHalfPress()},{passive:true});
+ // iOS が pointerup を消費しても、離した指で長押しが発火し続けないようにする。
+ el.addEventListener('touchend',()=>{const rec=press;if(rec&&!rec.fired)setTimeout(()=>{if(press===rec)cancelHalfPress()},0)},{passive:true});
  el.addEventListener('pointerup',e=>{
   const rec=press;press=null;
   if(!touchy(e)||!rec||rec.id!==e.pointerId)return;
   clearTimeout(rec.timer);
   if(rec.fired){el._wordSelHold=performance.now()+900;return} // 長押しで選択済み
   const now=performance.now();
-  if(rec.index>=0&&lastTap&&now-lastTap.time<450&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<40){
+  if(rec.index!==null&&lastTap&&now-lastTap.time<330&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<24&&rec.index===lastTap.index){
    const triple=lastTap.count===2;
-   lastTap=triple?null:{time:now,x:e.clientX,y:e.clientY,count:2};
+   lastTap=triple?null:{time:now,x:e.clientX,y:e.clientY,index:rec.index,count:2};
    pick(rec.index,triple);return;
   }
-  lastTap={time:now,x:e.clientX,y:e.clientY,count:1};
+  lastTap={time:now,x:e.clientX,y:e.clientY,index:rec.index,count:1};
  });
 }
 /* v1.2e: 物理キーボードの上下左右を、画面上の縦書き方向に一致させる。
@@ -1604,7 +1647,7 @@ function kotoPdfPages(work,kind){
  return pages;
 }
 function kotoPdfVChar(ch){
- return ({'「':'﹁','」':'﹂','『':'﹃','』':'﹄','（':'︵','）':'︶','【':'︻','】':'︼','［':'﹇','］':'﹈','〈':'︿','〉':'﹀','《':'︽','》':'︾','…':'⋮','‥':'︰','ー':'丨','―':'︱','—':'︱'})[ch]||ch;
+ return ({'「':'﹁','」':'﹂','『':'﹃','』':'﹄','（':'︵','）':'︶','(':'︵',')':'︶','【':'︻','】':'︼','［':'﹇','］':'﹈','〈':'︿','〉':'﹀','《':'︽','》':'︾','…':'⋮','‥':'︰','ー':'丨','―':'︱','—':'︱'})[ch]||ch;
 }
 /* v1.2i: PDF描画専用の縦書き表記補正。
    1) 句読点は「マス枠の右端」ではなく本文の標準文字のインク右端へ揃える。
@@ -1678,7 +1721,7 @@ function kotoPdfVerticalGlyph(ctx,original,x,y,faceSize,cellW,cellH,bookMode=fal
  // ブラウザの書籍プレビューは text-orientation:mixed。
  // Canvasの通常fillTextは英数字を直立させてしまうので、書籍PDFのみ横倒しにする。
  // 原稿用紙（text-orientation:upright）は従来の1マス1字を維持。
- if(bookMode && /^[\x21-\x7e]$/.test(ch)){
+ if(bookMode && /^[\x21-\x7e]$/.test(ch) && ch!=='(' && ch!==')'){
   ctx.save();ctx.translate(x,y);ctx.rotate(Math.PI/2);
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ch,0,0);
   ctx.restore();return;
@@ -1937,12 +1980,12 @@ if(nativeInPlace){
   function selectBookWord(x,y,fixedIndex=null){
    if(activeStyle==='manu'||nativeComposing.has(t))return;
    // キーボード出現でページが移動しても、指を置いた時の文字位置を使う。
-   const pos=fixedIndex===null?tapCaretIndex(t,x,y):fixedIndex,str=t.value;
+   const pos=fixedIndex===null?tapGlyphIndex(t,x,y):fixedIndex,str=t.value;
+   if(pos===null)return;
    let start=pos,end=pos;
    if(typeof Intl.Segmenter==='function'){
     const words=[...new Intl.Segmenter('ja',{granularity:'word'}).segment(str)];
-    const word=words.find(w=>w.index<=pos&&pos<w.index+w.segment.length&&w.isWordLike)
-      ||words.findLast(w=>w.index+w.segment.length===pos&&w.isWordLike);
+    const word=words.find(w=>w.index<=pos&&pos<w.index+w.segment.length&&w.isWordLike);
     if(word){start=word.index;end=start+word.segment.length;}
    }
    if(start===end){
@@ -1993,10 +2036,15 @@ if(nativeInPlace){
    // 通常のキーボード起動を妨げる場合があるので使わない。
    ignoreBookClick=false;lastSel=null;pendingBookTap=null;
    const index=tapCaretIndex(t,e.clientX,e.clientY);
-   const record={x:e.clientX,y:e.clientY,index,id:e.pointerId,timer:0,
+   const glyphIndex=tapGlyphIndex(t,e.clientX,e.clientY);
+   const record={x:e.clientX,y:e.clientY,index,glyphIndex,id:e.pointerId,timer:0,scrollY:window.scrollY,scrollTop:$('paperViewport').scrollTop,
     hadFocus:document.activeElement===t};bookPress=record;
    focusBookFromGesture();
-   record.timer=setTimeout(()=>{if(bookPress===record){selectBookWord(record.x,record.y,record.index);bookPress=null}},480);
+   if(glyphIndex!==null)record.timer=setTimeout(()=>{
+    if(bookPress===record&&document.visibilityState!=='hidden'&&Math.abs(window.scrollY-record.scrollY)<2&&Math.abs($('paperViewport').scrollTop-record.scrollTop)<2){
+     selectBookWord(record.x,record.y,record.glyphIndex);bookPress=null;
+    }
+   },620);
   });
   // Safariはtouchstartを「キーボード起動を許す直接操作」として扱う。
   // timer/描画フレームの中で初めてfocusするのを避けるための補助。
@@ -2004,11 +2052,26 @@ if(nativeInPlace){
    if(e.touches.length===1)focusBookFromGesture();
   },{passive:true});
   preview.addEventListener('pointermove',e=>{
-   if(bookPress?.id===e.pointerId&&Math.hypot(e.clientX-bookPress.x,e.clientY-bookPress.y)>12){
-    clearTimeout(bookPress.timer);bookPress=null;
+   if(bookPress?.id===e.pointerId&&Math.hypot(e.clientX-bookPress.x,e.clientY-bookPress.y)>9){
+    clearTimeout(bookPress.timer);bookPress=null;lastBookTap=null;
    }
   });
+  preview.addEventListener('touchmove',e=>{
+   const p=e.touches[0];if(bookPress&&p&&Math.hypot(p.clientX-bookPress.x,p.clientY-bookPress.y)>9){
+    clearTimeout(bookPress.timer);bookPress=null;lastBookTap=null;
+   }
+  },{passive:true});
   const endPress=()=>{if(bookPress)clearTimeout(bookPress.timer);bookPress=null};
+  const cancelBookPress=()=>{endPress();lastBookTap=null;pendingBookTap=null};
+  preview.addEventListener('touchcancel',cancelBookPress,{passive:true});
+  $('paperViewport').addEventListener('scroll',()=>{if(bookPress)cancelBookPress()},{passive:true});
+  window.addEventListener('scroll',()=>{if(bookPress)cancelBookPress()},{passive:true});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelBookPress()});
+  // pointerupが欠落したSafariでも長押しタイマーを放置しない。
+  preview.addEventListener('touchend',()=>{
+   const rec=bookPress;
+   if(rec)setTimeout(()=>{if(bookPress===rec)endPress()},0);
+  },{passive:true});
   // ダブルタップ判定は click ではなく pointerup で行う(再描画やキーボード表示の影響を受けにくい)。
   preview.addEventListener('pointerup',e=>{
    const rec=bookPress;endPress();
@@ -2023,14 +2086,16 @@ if(nativeInPlace){
    }
    if(!rec||rec.id!==e.pointerId||activeStyle==='manu')return;
    const now=performance.now();
-   if(lastBookTap&&now-lastBookTap.time<450&&Math.hypot(e.clientX-lastBookTap.x,e.clientY-lastBookTap.y)<40){
+   if(rec.glyphIndex!==null&&lastBookTap&&now-lastBookTap.time<330&&
+      Math.hypot(e.clientX-lastBookTap.x,e.clientY-lastBookTap.y)<24&&
+      rec.glyphIndex===lastBookTap.glyphIndex){
     // 2回目=語句選択、3回目=段落(改行から改行まで)選択
     const triple=lastBookTap.count===2;
-    lastBookTap=triple?null:{time:now,x:e.clientX,y:e.clientY,count:2};pendingBookTap=null;
-    if(triple)selectBookParagraph(rec.index);else selectBookWord(e.clientX,e.clientY,rec.index);
+    lastBookTap=triple?null:{time:now,x:e.clientX,y:e.clientY,glyphIndex:rec.glyphIndex,count:2};pendingBookTap=null;
+    if(triple)selectBookParagraph(rec.glyphIndex);else selectBookWord(e.clientX,e.clientY,rec.glyphIndex);
     return;
    }
-   lastBookTap={time:now,x:e.clientX,y:e.clientY,count:1};
+   lastBookTap={time:now,x:e.clientX,y:e.clientY,glyphIndex:rec.glyphIndex,count:1};
    pendingBookTap={time:now,index:rec.index};
    // v1.0: touch / pen の pointerup は Safari のユーザー操作として認識される。
    // pointerdown で先にフォーカスしていても、キーボードが開かなかった場合は
