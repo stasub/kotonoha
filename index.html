@@ -258,7 +258,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">選択解除後の誤選択対策 v1.2k</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">タップ選択の状態整理 v1.2l</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -1354,13 +1354,19 @@ function wireHalfTouchSelect(el){
   // Safariのネイティブ選択も検知する。遅延した再選択タイマーは世代番号で無効化。
   const wasSelected=!!sel||el.selectionStart!==el.selectionEnd;
   gen++;sel=null;el._wordSelHold=0;
-  if(wasSelected)lastTap=null;
+  el._kotoTapSerial=gen;
+  el._kotoReleaseTap=null; // 前の指の合成clickを次のタップへ引き継がない。
   if(press)clearTimeout(press.timer);
   let index=null;try{index=tapGlyphIndex(el,e.clientX,e.clientY)}catch(_){}
-  // すでに選択済みの範囲の上を押した場合は、ネイティブのコピー等のメニューに任せる。
-  const inside=el.selectionStart!==el.selectionEnd&&index!==null&&index>=el.selectionStart&&index<el.selectionEnd;
-  const rec={x:e.clientX,y:e.clientY,id:e.pointerId,index,wasSelected,fired:false,timer:0,scrollY:window.scrollY,scrollTop:$('paperViewport').scrollTop};
-  if(index!==null&&!inside)rec.timer=setTimeout(()=>{if(press===rec&&document.visibilityState!=='hidden'&&Math.abs(window.scrollY-rec.scrollY)<2&&Math.abs($('paperViewport').scrollTop-rec.scrollTop)<2){rec.fired=pick(rec.index)}},620);
+  const caret=tapCaretIndex(el,e.clientX,e.clientY);
+  // v1.2l: 選択を「記憶から消す」だけではネイティブtextareaの範囲は残る。
+  // 次の接触で本物の範囲を畳み、Safariが次の1タップを選択の継続として扱うのを防ぐ。
+  if(wasSelected&&!nativeComposing.has(el)&&!nativePending.has(el)){
+   try{el.setSelectionRange(caret,caret);rememberedNativeSelection=null;syncNativeVisual(el)}catch(_){}
+  }
+  const rec={x:e.clientX,y:e.clientY,id:e.pointerId,index,caret,wasSelected,fired:false,timer:0,scrollY:window.scrollY,scrollTop:$('paperViewport').scrollTop};
+  // 選択解除のためのタップでは長押し選択を起動しない。
+  if(!wasSelected&&index!==null)rec.timer=setTimeout(()=>{if(press===rec&&document.visibilityState!=='hidden'&&Math.abs(window.scrollY-rec.scrollY)<2&&Math.abs($('paperViewport').scrollTop-rec.scrollTop)<2){rec.fired=pick(rec.index)}},620);
   press=rec;
  });
  el.addEventListener('pointermove',e=>{
@@ -1380,9 +1386,15 @@ function wireHalfTouchSelect(el){
   if(!touchy(e)||!rec||rec.id!==e.pointerId)return;
   clearTimeout(rec.timer);
   if(rec.fired){lastTap=null;el._wordSelHold=performance.now()+900;return} // 長押しで選択済み
-  // 選択解除のワンタップは次のタップ履歴に残さない。
-  if(rec.wasSelected){lastTap=null;return}
   const now=performance.now();
+  if(rec.wasSelected){
+   // まず必ずカーソル移動。次のタップはこのタップから新たに数える。
+   // Safariが合成clickで範囲を再選択しても訂正できるよう一回限りの目印を残す。
+   el._kotoReleaseTap={index:rec.caret,time:now,serial:gen};
+   try{el.setSelectionRange(rec.caret,rec.caret);rememberedNativeSelection=null;syncNativeVisual(el)}catch(_){}
+   lastTap={time:now,x:e.clientX,y:e.clientY,index:rec.index,count:1};
+   return;
+  }
   if(rec.index!==null&&lastTap&&now-lastTap.time<330&&Math.hypot(e.clientX-lastTap.x,e.clientY-lastTap.y)<24&&rec.index===lastTap.index){
    const triple=lastTap.count===2;
    lastTap=triple?null:{time:now,x:e.clientX,y:e.clientY,index:rec.index,count:2};
@@ -1467,7 +1479,22 @@ function wireNative(el){
   if(!down||performance.now()-down.time>400||Math.hypot(down.x-e.clientX,down.y-e.clientY)>12)return;
   requestAnimationFrame(()=>setCaretFromTap(el,e.clientX,e.clientY));
  });
- el.addEventListener('click',e=>{rememberNativeRange(el);if(e.detail&&e.detail===1)setCaretFromTap(el,e.clientX,e.clientY);syncNativeVisual(el)});
+ el.addEventListener('click',e=>{
+  const release=el._kotoReleaseTap;
+  if(release&&performance.now()-release.time<650){
+   el._kotoReleaseTap=null;
+   try{el.setSelectionRange(release.index,release.index);rememberedNativeSelection=null}catch(_){}
+   syncNativeVisual(el);
+   // Safariでは合成clickの直後にネイティブ範囲が復活する場合がある。
+   requestAnimationFrame(()=>{
+    if(el.isConnected&&el._kotoTapSerial===release.serial&&!nativeComposing.has(el)&&!nativePending.has(el)&&!el._wordSelHold){
+     try{el.setSelectionRange(release.index,release.index);syncNativeVisual(el)}catch(_){}
+    }
+   });
+   return;
+  }
+  rememberNativeRange(el);if(e.detail&&e.detail===1)setCaretFromTap(el,e.clientX,e.clientY);syncNativeVisual(el)
+ });
  el.addEventListener('select',()=>{rememberNativeRange(el);syncNativeVisual(el)});
  el.addEventListener('input',()=>{el._kotoGoalRow=null;if(el.id!=='bookEditor')kickRepaint(el);else syncBookPreview()});
  el.addEventListener('keyup',()=>{rememberNativeRange(el);syncNativeVisual(el)});
@@ -1951,7 +1978,7 @@ if(nativeInPlace){
   // 見えている本文からタップ位置を取得して入力窓へ転送する。
   // focus は iOS のユーザー操作イベント内で同期的に呼ぶ。
   let bookPress=null,ignoreBookClick=false,lastBookTap=null,lastSel=null;
-  let lastTouchBookUp=0, pendingBookTap=null,bookSelectionEpoch=0;
+  let lastTouchBookUp=0, pendingBookTap=null,bookSelectionEpoch=0,bookTouchSerial=0;
   // 選択の保護タイマーは「その選択操作」にだけ紐づける。次のタップで失効させる。
   const clearBookSelectionHold=()=>{bookSelectionEpoch++;lastSel=null;ignoreBookClick=false};
   // iOSは遅延したfocus()だけではソフトキーボードを開かない場合がある。
@@ -2051,13 +2078,15 @@ if(nativeInPlace){
    // iOSが選択中に余分なタップを認識しても、その後のワンタップはカーソル移動に戻す。
    const wasSelected=!!lastSel||t.selectionStart!==t.selectionEnd;
    clearBookSelectionHold();pendingBookTap=null;
-   if(wasSelected)lastBookTap=null;
    const index=tapCaretIndex(t,e.clientX,e.clientY);
    const glyphIndex=tapGlyphIndex(t,e.clientX,e.clientY);
    const record={x:e.clientX,y:e.clientY,index,glyphIndex,id:e.pointerId,timer:0,scrollY:window.scrollY,scrollTop:$('paperViewport').scrollTop,
-    hadFocus:document.activeElement===t,wasSelected};bookPress=record;
+    hadFocus:document.activeElement===t,wasSelected,serial:++bookTouchSerial};bookPress=record;
    focusBookFromGesture();
-   if(glyphIndex!==null)record.timer=setTimeout(()=>{
+   // 選択後は「記憶」だけでなくtextareaの実際の選択範囲もその場で解除。
+   if(wasSelected&&!nativeComposing.has(t)&&!nativePending.has(t))selectBookCaretAt(index);
+   // 選択解除のための最初のタップを長押し選択へ昇格させない。
+   if(!wasSelected&&glyphIndex!==null)record.timer=setTimeout(()=>{
     if(bookPress===record&&document.visibilityState!=='hidden'&&Math.abs(window.scrollY-record.scrollY)<2&&Math.abs($('paperViewport').scrollTop-record.scrollTop)<2){
      lastBookTap=null;
      selectBookWord(record.x,record.y,record.glyphIndex);bookPress=null;
@@ -2104,7 +2133,19 @@ if(nativeInPlace){
    }
    if(!rec||rec.id!==e.pointerId||activeStyle==='manu')return;
    const now=performance.now();
-   if(!rec.wasSelected&&rec.glyphIndex!==null&&lastBookTap&&now-lastBookTap.time<330&&
+   if(rec.wasSelected){
+    // 以前の選択が残っていた場合でも、今回の1タップは常にカーソル移動。
+    // iPhoneのクリック合成後も次のフレームで一度だけ位置を確定する。
+    selectBookCaretAt(rec.index);
+    pendingBookTap={time:now,index:rec.index};
+    lastBookTap={time:now,x:e.clientX,y:e.clientY,glyphIndex:rec.glyphIndex,count:1};
+    const serial=rec.serial;
+    requestAnimationFrame(()=>{
+     if(serial===bookTouchSerial&&!lastSel&&!nativeComposing.has(t)&&!nativePending.has(t))selectBookCaretAt(rec.index);
+    });
+    return;
+   }
+   if(rec.glyphIndex!==null&&lastBookTap&&now-lastBookTap.time<330&&
       Math.hypot(e.clientX-lastBookTap.x,e.clientY-lastBookTap.y)<24&&
       rec.glyphIndex===lastBookTap.glyphIndex){
     // 2回目=語句選択、3回目=段落(改行から改行まで)選択
@@ -2113,8 +2154,7 @@ if(nativeInPlace){
     if(triple)selectBookParagraph(rec.glyphIndex);else selectBookWord(e.clientX,e.clientY,rec.glyphIndex);
     return;
    }
-   // 以前の選択を閉じたタップは新しいダブルタップの始点にしない。
-   lastBookTap=rec.wasSelected?null:{time:now,x:e.clientX,y:e.clientY,glyphIndex:rec.glyphIndex,count:1};
+   lastBookTap={time:now,x:e.clientX,y:e.clientY,glyphIndex:rec.glyphIndex,count:1};
    pendingBookTap={time:now,index:rec.index};
    // v1.0: touch / pen の pointerup は Safari のユーザー操作として認識される。
    // pointerdown で先にフォーカスしていても、キーボードが開かなかった場合は
