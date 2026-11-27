@@ -7,8 +7,8 @@
  * ※ IndexedDBは平文。ログイン認証はE2EEとは別の仕組み。秘密鍵をバックアップしないのでパスフレーズ紛失＝復号不可。
  */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js';
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js';
-import { getFirestore, doc, collection, getDocFromServer, getDocsFromServer, runTransaction, serverTimestamp } from 'https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, setPersistence, browserLocalPersistence } from 'https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js';
+import { getFirestore, doc, collection, getDocFromServer, getDocsFromServer, onSnapshot, runTransaction, serverTimestamp } from 'https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCo0R79jF3PzEUPEMlhY3W95EDWb4TJb-4',
@@ -31,11 +31,17 @@ let connecting = false;
 let connectStep = '';
 let lastErrorAt = 0;
 let connectionWatchdog = 0;
-const CONNECT_VERSION = '同期診断 2026-11-07';
+const CONNECT_VERSION = '同期改善 v1.2q';
 let inProgress = false;
 let rerun = false;
 let syncTimer = 0;
 let activePoll = 0;
+let unsubscribe = null, expiryTimer = 0, expiresAt = 0;
+let stopping = false, restoring = false, restorePending = false;
+let lockEpoch=0;
+let lastSync = '', retryTimer = 0;
+const KEY_SLOT = 'trusted-key-v12q';
+const TTL = 24*60*60*1000;
 let skippedForFocus = false;
 let warningsDuringSync = false;
 const saveTimers = new Map();
@@ -48,7 +54,8 @@ const b64 = raw => {
 const unb64 = text => Uint8Array.from(atob(text), c=>c.charCodeAt(0));
 const random = len => crypto.getRandomValues(new Uint8Array(len));
 const wait = ms => new Promise(resolve=>setTimeout(resolve,ms));
-const isActive = () => !!(user && key && B?.ready());
+const isActive = () => !!(user && key && B?.ready() && !stopping && auth.currentUser?.uid===user.uid && (!expiresAt || Date.now()<expiresAt));
+const canReceive = () => B.syncReady() && !B.editableFocused();
 const status = (s,error=false)=>{
   if(error && inProgress)warningsDuringSync=true;
   const el=$('cloudStatus');if(el){el.textContent=s;el.style.color=error?'#b24335':'#5c7865'}
@@ -124,9 +131,10 @@ const localList = () => {
   return list;
 };
 async function importRemote(id,p,revision,expectedLocalDigest){
-  if(B.editableFocused()){skippedForFocus=true;status('別端末の更新待ち：編集後に再確認');return false}
+  if(!isActive()||!canReceive()){skippedForFocus=true;status('別端末の更新待ち：編集後に再確認');return false}
   const now=payload(id);
   if(now && await hash(now)!==expectedLocalDigest){rerun=true;return false}
+  if(!isActive() || !canReceive()){skippedForFocus=true;return false}
   if(id===NOTE){await B.setNote(p.value||'')}
   else{if(!p || typeof p!=='object' || !p.id || p.id!==id || typeof p.text!=='string')throw new Error('受信作品の形式が不正');await B.importWork(p)}
   await writeBase(id,revision,await hash(payload(id)));
@@ -150,9 +158,10 @@ async function reconcile(id,cloudSnap){
     if(!local)return;
     if(base){status('同期先のデータが消えています。上書きを停止',true);return}
     const encrypted=await encrypt(local);
+    if(!isActive())return;
     const written=await runTransaction(db,async tx=>{
       const snap=await tx.get(ref);
-      if(snap.exists())return false;
+      if(!isActive()||snap.exists())return false;
       tx.set(ref,{...encrypted,revision:1,updatedAt:serverTimestamp(),deleted:false});return true;
     });
     if(written){await writeBase(id,1,localDigest);return}
@@ -169,7 +178,7 @@ async function reconcile(id,cloudSnap){
     const received=await decrypt(remote);
     const remoteDigest=await hash(received);
     if(remoteDigest===localDigest){await writeBase(id,remote.revision,localDigest);return}
-    if(B.editableFocused()){skippedForFocus=true;status('別端末の更新待ち：編集後に再確認');return}
+    if(!isActive()||!canReceive()){skippedForFocus=true;status('別端末の更新待ち：編集後に再確認');return}
     if(base && localDigest===base.digest){
       await importRemote(id,received,remote.revision,localDigest);return;
     }
@@ -190,17 +199,21 @@ async function reconcile(id,cloudSnap){
   // 同じrevisionに対するローカル更新 → revisionの一致をTransactionで確認してから書込む。
   if(await hash(payload(id))!==localDigest){rerun=true;return}
   const encrypted=await encrypt(local);
+  if(!isActive())return;
   const committed=await runTransaction(db,async tx=>{
     const snap=await tx.get(ref);
-    if(!snap.exists()||snap.data().revision!==base.revision || snap.data().deleted)return false;
+    if(!isActive()||!snap.exists()||snap.data().revision!==base.revision || snap.data().deleted)return false;
     tx.set(ref,{...encrypted,revision:base.revision+1,updatedAt:serverTimestamp(),deleted:false});return true;
   });
   if(committed){await writeBase(id,base.revision+1,localDigest);return}
   rerun=true;
 }
 async function syncAll(){
-  if(!isActive()||!navigator.onLine)return;
+  if(expiresAt && Date.now()>=expiresAt){void lockSync(false);return;}
+  if(!isActive())return;
+  if(!navigator.onLine){status('オフライン：端末保存中',true);return;}
   if(inProgress){rerun=true;return}
+  if(!B.syncReady()){status('端末保存・文字変換の完了待ち');scheduleRetry();return;}
   inProgress=true;skippedForFocus=false;warningsDuringSync=false;status('☁ 同期中…');
   try{
     const snap=await getDocsFromServer(collection(db,'users',user.uid,'works'));
@@ -208,13 +221,85 @@ async function syncAll(){
     const local=localList();
     for(const id of new Set([...remote.keys(),...local.keys()])){
       if(!isActive())break;
+      if(!B.syncReady()){skippedForFocus=true;status('端末保存・文字変換の完了待ち');break;}
       await reconcile(id,remote.get(id));
     }
-    if(!skippedForFocus && !warningsDuringSync){status('☁ 暗号化同期済み');}
+    if(isActive() && !skippedForFocus && !warningsDuringSync && !rerun){lastSync=new Date().toLocaleTimeString('ja-JP');status('☁ 同期済み '+lastSync);}
+    if(skippedForFocus && isActive() && !B.editableFocused())scheduleRetry();
   }catch(e){report(e)}finally{
     inProgress=false;
-    if(rerun && isActive()){rerun=false;setTimeout(syncAll,1300)}
+    if(rerun && isActive()){rerun=false;scheduleRetry();}
   }
+}
+function scheduleRetry(){
+  clearTimeout(retryTimer);retryTimer=setTimeout(()=>{if(document.visibilityState==='visible')void syncAll()},5000);
+}
+function stopWatch(){
+  clearInterval(activePoll);clearTimeout(syncTimer);clearTimeout(retryTimer);clearTimeout(expiryTimer);
+  if(unsubscribe){unsubscribe();unsubscribe=null;}
+  for(const timer of saveTimers.values())clearTimeout(timer);saveTimers.clear();rerun=false;
+}
+function startWatch(){
+  stopWatch();
+  if(expiresAt)expiryTimer=setTimeout(()=>void lockSync(false),Math.max(0,expiresAt-Date.now()));
+  // Listener is a notification only: all writes and imports still use the original server-read / revision logic.
+  unsubscribe=onSnapshot(collection(db,'users',user.uid,'works'),{includeMetadataChanges:true},snap=>{
+    if(snap.metadata.fromCache || snap.metadata.hasPendingWrites || !isActive())return;
+    clearTimeout(syncTimer);syncTimer=setTimeout(()=>{if(document.visibilityState==='visible')void syncAll()},600);
+  },e=>{console.warn('同期の変更通知',e);});
+  activePoll=setInterval(()=>{if(document.visibilityState==='visible')void syncAll()},120000);
+}
+async function waitForBridge(){
+  for(let i=0;i<100&&!B.ready();i++)await wait(100);
+  if(!B.ready())throw new Error('端末保存の準備ができていないよ');
+}
+async function clearRemembered(){await B.deleteMeta(KEY_SLOT);}
+async function lockSync(logout=false){
+  if(stopping)return;
+  stopping=true;lockEpoch++;restorePending=false;stopWatch();
+  $('cloudLock').disabled=true;$('cloudLogout').disabled=true;$('cloudConnect').disabled=true;
+  try{
+    // An already-started transaction is allowed to finish; no new sync is started.
+    await waitForBridge();
+    await clearRemembered();
+    status('暗号化鍵ロック中：進行中の同期終了待ち');
+    while(inProgress)await wait(100);
+    key=null;user=null;expiresAt=0;
+    if(logout){await signOut(auth);$('cloudDialog').close();}
+    status(logout?'クラウドからログアウト':'暗号化鍵ロック中：パスフレーズを入力');
+  }catch(e){while(inProgress)await wait(100);key=null;user=null;expiresAt=0;status('保存した鍵の削除・ログアウトを確認できません',true);console.error(e);}
+  finally{stopping=false;$('cloudLock').disabled=false;$('cloudLogout').disabled=false;$('cloudConnect').disabled=false;}
+}
+async function restoreSession(u){
+  if(!u||connecting||restoring||stopping||key)return;
+  restoring=true;
+  const epoch=lockEpoch;
+  try{
+    await waitForBridge();
+    if(auth.currentUser?.uid!==u.uid || epoch!==lockEpoch)return;
+    const owner=await B.readMeta('owner');
+    const saved=await B.readMeta(KEY_SLOT);
+    if(epoch!==lockEpoch || auth.currentUser?.uid!==u.uid)return;
+    if(saved?.uid===u.uid && owner===u.uid)$('cloudRemember').checked=true;
+    if(owner!==u.uid || !saved || saved.uid!==u.uid || !Number.isFinite(saved.expiresAt) || saved.expiresAt<=Date.now() || saved.expiresAt>Date.now()+TTL || saved.key?.type!=='secret' || saved.key?.extractable!==false || saved.key?.algorithm?.name!=='AES-GCM'){
+      if(saved)await clearRemembered();
+      restorePending=false;status('ログイン済み・原稿の鍵を入力してね');return;
+    }
+    $('cloudRemember').checked=true;
+    if(!navigator.onLine){restorePending=true;status('オフライン：接続後に鍵を確認');return;}
+    // Never accept a remembered key against a different encryption configuration.
+    const snap=await getDocFromServer(metaRef(u.uid));
+    if(!snap.exists())throw new Error('暗号化設定が見つからないよ');
+    const m=snap.data();
+    const text=dec.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(m.iv)},saved.key,unb64(m.verifier)));
+    if(text!=='kotonoha-v1-correct-passphrase')throw new Error('保存した鍵が一致しないよ');
+    if(auth.currentUser?.uid!==u.uid || stopping || connecting || epoch!==lockEpoch || Date.now()>=saved.expiresAt)return;
+    // Re-read to detect a manual lock from another tab while verification was pending.
+    const latest=await B.readMeta(KEY_SLOT);
+    if(!latest || latest.expiresAt!==saved.expiresAt || stopping || connecting || epoch!==lockEpoch || Date.now()>=saved.expiresAt || auth.currentUser?.uid!==u.uid)return;
+    user=u;key=saved.key;expiresAt=saved.expiresAt;restorePending=false;startWatch();void syncAll();
+  }catch(e){if(epoch===lockEpoch){restorePending=true;status('鍵の自動確認ができません。再同期またはパスフレーズを入力',true);console.warn(e);}}
+  finally{restoring=false;}
 }
 function requestSync(id){
   if(!isActive())return;
@@ -222,6 +307,7 @@ function requestSync(id){
   saveTimers.set(id,setTimeout(()=>{saveTimers.delete(id);syncAll()},1300));
 }
 async function beforeDelete(id){
+  if(stopping || (expiresAt && Date.now()>=expiresAt)){status('暗号化鍵のロック処理中：削除を停止',true);return false;}
   if(!isActive())return true;
   if(!navigator.onLine){status('オフライン中はクラウド作品を削除できない',true);return false}
   const base=await storedBase(id);
@@ -229,6 +315,7 @@ async function beforeDelete(id){
   try{
     const allowed=await runTransaction(db,async tx=>{
       const snap=await tx.get(ref);
+      if(!isActive())return false;
       if(!snap.exists())return !base;
       if(!base||snap.data().revision!==base.revision||snap.data().deleted)return false;
       tx.set(ref,{format:1,revision:base.revision+1,deleted:true,updatedAt:serverTimestamp()});return true;
@@ -239,28 +326,40 @@ async function beforeDelete(id){
 }
 window.KotonohaCloud={active:isActive,beforeDelete,requestSync};
 
+$('cloudSyncNow').addEventListener('click',async()=>{
+  if(connecting||restoring||stopping)return;
+  if(!isActive()){if(restorePending&&auth.currentUser){await restoreSession(auth.currentUser);if(isActive())return;} $('cloudOpen').click();return;}
+  // A deliberate tap ends focus, but never force a blur during IME finalization.
+  if(B.syncReady() && B.editableFocused())document.activeElement?.blur();
+  await wait(500);
+  if(!isActive())return;
+  if(!B.syncReady()||B.editableFocused()){status('入力確定・保存後に同期します');scheduleRetry();return;}
+  await syncAll();
+});
+
 $('cloudOpen').addEventListener('click',()=>{
+  const u=auth.currentUser;
+  if(u?.email)$('cloudEmail').value=u.email;
   $('cloudDialog').showModal();
   const box=$('cloudDialogMessage');
   if(box && !connecting){
     box.style.color='#5c7865';
-    box.textContent=`${CONNECT_VERSION} を読み込み済み。下のボタンで接続確認を始められるよ。`;
+    box.textContent=isActive()? (expiresAt?'鍵の保持期限：'+new Date(expiresAt).toLocaleString('ja-JP'):'暗号化同期は接続中') : u?'ログイン済み。パスワード欄は空欄のまま、パスフレーズを入力してね。':`${CONNECT_VERSION} を読み込み済み。`;
   }
 });
 $('cloudClose').addEventListener('click',()=>{$('cloudDialog').close()});
-$('cloudLogout').addEventListener('click',async()=>{
-  key=null;user=null;
-  try{await signOut(auth)}catch(e){report(e)}
-  clearInterval(activePoll);status('クラウドからログアウト');$('cloudDialog').close();
-});
+$('cloudLock').addEventListener('click',()=>{if(!connecting)void lockSync(false)});
+$('cloudLogout').addEventListener('click',()=>{if(!connecting)void lockSync(true)});
 $('cloudConnect').addEventListener('click',async()=>{
   // 二重送信を防ぎ、何が進行しているか必ず画面に表示する。
-  if(connecting)return;
+  if(connecting||restoring||stopping)return;
   const button=$('cloudConnect');
   const email=$('cloudEmail').value.trim();
   const pw=$('cloudPassword').value;
   const phrase=$('cloudPassphrase').value;
-  if(!email||!pw){
+  const existing=auth.currentUser;
+  const reuse=!!(existing && existing.email===email && !pw);
+  if(!reuse && (!email||!pw)){
     const box=$('cloudDialogMessage');
     if(box){box.style.color='#b24335';box.textContent='メールアドレスとログイン用パスワードを入力してね';}
     return;
@@ -295,7 +394,13 @@ $('cloudConnect').addEventListener('click',async()=>{
     }
   },15000);
   try{
-    const credential=await signInWithEmailAndPassword(auth,email,pw);
+    await waitForBridge();
+    // Do not replace an active key/account while a previous sync is running.
+    stopWatch();while(inProgress)await wait(100);
+    key=null;user=null;expiresAt=0;restorePending=false;
+    await clearRemembered();
+    if(!reuse){try{await setPersistence(auth,browserLocalPersistence)}catch(e){console.warn('ログイン状態を保持できません',e);}}
+    const credential=reuse?{user:existing}:await signInWithEmailAndPassword(auth,email,pw);
     const uid=credential.user.uid;
     showConnectStep('② Firebaseログイン成功。端末データと暗号化鍵を確認中…');
     const owner=await B.readMeta('owner');
@@ -305,14 +410,19 @@ $('cloudConnect').addEventListener('click',async()=>{
     user=credential.user;
     key=newKey;
     await B.writeMeta('owner',uid);
+    let rememberFailed=false;
+    if($('cloudRemember').checked){
+      const deadline=Date.now()+TTL;
+      try{await B.writeMeta(KEY_SLOT,{uid,key:newKey,expiresAt:deadline});expiresAt=deadline;}
+      catch(e){rememberFailed=true;console.warn('鍵の端末保存に失敗',e);}
+    }
     $('cloudPassword').value='';$('cloudPassphrase').value='';
     $('cloudDialog').close();
-    await syncAll();
-    clearInterval(activePoll);
-    activePoll=setInterval(()=>{if(document.visibilityState==='visible'&&navigator.onLine)syncAll()},120000);
-    B.notify('暗号化同期のテストを開始したよ');
+    startWatch();await syncAll();
+    B.notify(rememberFailed?'鍵を保存できなかったため、再起動時は再入力してね':'暗号化同期のテストを開始したよ');
   }catch(e){
-    key=null;user=null;report(e);
+    stopWatch();key=null;user=null;expiresAt=0;report(e);
+    try{await clearRemembered()}catch{}
     // 誤ったキー・ユーザーはログイン状態にも残さない。
     try{await signOut(auth)}catch{}
   }finally{
@@ -324,15 +434,21 @@ $('cloudConnect').addEventListener('click',async()=>{
 });
 window.addEventListener('kotonoha:worksaved',e=>requestSync(e.detail?.id));
 window.addEventListener('kotonoha:notesaved',()=>requestSync(NOTE));
-window.addEventListener('online',()=>syncAll());
-window.addEventListener('focus',()=>{if(isActive())syncAll()});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncAll()});
+function wake(){
+  if(expiresAt && Date.now()>=expiresAt){void lockSync(false);return;}
+  if(restorePending && auth.currentUser)void restoreSession(auth.currentUser);
+  else if(isActive())void syncAll();
+}
+window.addEventListener('online',wake);
+window.addEventListener('focus',wake);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')wake()});
 document.addEventListener('focusout',()=>{
-  if(skippedForFocus){setTimeout(()=>{if(!B.editableFocused())syncAll()},500)}
+  if(skippedForFocus){setTimeout(()=>{if(!B.editableFocused())void syncAll()},500)}
 });
 onAuthStateChanged(auth,u=>{
-  if(connecting || Date.now()-lastErrorAt<15000)return;
-  if(u&&!key)status('ログイン済み・原稿の鍵を入力してね');
-  else if(!u&&!key)status('クラウド未接続');
+  if(connecting||stopping)return;
+  if(user && user.uid!==u?.uid){void lockSync(false);return;}
+  if(u&&!key)void restoreSession(u);
+  else if(!u&&!key){restorePending=false;status('クラウド未接続');void waitForBridge().then(()=>{if(!auth.currentUser && !connecting)return clearRemembered();}).catch(console.warn);}
 });
 status('クラウド未接続');

@@ -212,6 +212,27 @@
 /* v0.2.8: 単行本・文庫でも、選択範囲の色付けと変換中の青ラインを出す */
 .book-preview .marked-char{background:rgba(61,132,247,.28);border-radius:2px}
 .book-preview.composing .marked-char{background:rgba(160,76,60,.14);box-shadow:inset 2.5px 0 0 #2f6fe4;border-radius:0}
+/* v1.2r: 原稿用紙の変換線を、IMEの内部折返しではなく表示済み文字に合わせる。
+   変換中のみ透明入力欄のネイティブ下線を紙面で覆う。通常の選択操作は維持。 */
+.native-visual.ime-marking{
+ background-color:var(--paper);
+ background-size:var(--pitch) var(--cell);
+ background-position:right top;background-repeat:repeat;
+ background-image:
+  linear-gradient(to left,var(--grid) 0,var(--grid) .65px,transparent .65px,transparent calc(var(--rg) - .65px),var(--grid) calc(var(--rg) - .65px),var(--grid) var(--rg),transparent var(--rg)),
+  linear-gradient(to left,var(--paper) 0,var(--paper) var(--rg),transparent var(--rg)),
+  linear-gradient(to bottom,var(--grid) .65px,transparent .65px)
+}
+.manu-horizontal .native-visual.ime-marking{
+ background-size:var(--cell) var(--pitch);background-position:left top;
+ background-image:
+  linear-gradient(to bottom,var(--grid) 0,var(--grid) .65px,transparent .65px,transparent calc(var(--rg) - .65px),var(--grid) calc(var(--rg) - .65px),var(--grid) var(--rg),transparent var(--rg)),
+  linear-gradient(to bottom,var(--paper) 0,var(--paper) var(--rg),transparent var(--rg)),
+  linear-gradient(to right,var(--grid) .65px,transparent .65px)
+}
+.native-visual.ime-marking .marked-char{box-shadow:inset 2.5px 0 0 #2f6fe4;border-radius:0}
+.manu-horizontal .native-visual.ime-marking .marked-char{box-shadow:inset 0 -2.5px 0 #2f6fe4}
+
 
 /* v0.5 — document zoom: pinch in mobile, independent of exported content */
 :root{--paper-zoom:1;--library-width:218px;--notes-width:247px}
@@ -264,12 +285,39 @@ html{scroll-padding-top:64px}
  body.notes-open .memo-close{display:block;position:absolute;top:10px;right:12px;z-index:2}
 }
 @media(min-width:1161px){#memoToggle{display:none!important}}
+
+/* v1.2o: independent read-only manuscript search panel. Editor and input layers are untouched. */
+.search-dialog{width:min(700px,calc(100vw - 22px));max-height:88vh;max-height:88dvh;border:1px solid var(--border);border-radius:16px;padding:0;color:var(--text);background:var(--paper);box-shadow:0 18px 55px #3c2d2344}
+.search-dialog::backdrop{background:rgba(34,29,25,.35)}
+.search-panel{padding:20px;display:flex;flex-direction:column;gap:13px;max-height:88vh;max-height:88dvh;min-height:0}
+.search-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.search-head h2{font-family:'Yu Mincho','Hiragino Mincho ProN',serif;font-size:21px;margin:3px 0 0}
+.search-head button{flex:none}
+.search-panel>label{font-size:12px;color:var(--muted)}
+.search-panel>input{width:100%;font-size:16px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--text);min-width:0}
+.search-scope{padding:0;margin:0;border:0;display:flex;gap:14px;flex-wrap:wrap;font-size:13px}
+.search-scope legend{font-size:12px;color:var(--muted);margin-bottom:6px}
+.search-scope label{display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.search-scope input{accent-color:var(--accent);width:16px;height:16px}
+.search-summary{font-size:13px;color:var(--accent);min-height:18px}
+.search-results{overflow-y:auto;overflow-x:hidden;min-height:100px;flex:1 1 auto;overscroll-behavior:contain;padding:0 2px 3px;scrollbar-gutter:stable}
+.search-group{border-top:1px solid var(--border);padding-top:12px;margin-top:3px}
+.search-group-head{font-weight:700;font-size:14px;margin-bottom:9px;overflow-wrap:anywhere}
+.search-group-count{font-weight:400;color:var(--muted);font-size:12px;margin-left:9px}
+.search-hit{border:1px solid var(--border);background:#fcfaf5;border-radius:9px;padding:10px 12px;margin:0 0 9px}
+.search-hit-place{font-size:11px;color:var(--muted);margin-bottom:5px}
+.search-hit-text{font-family:'Yu Mincho','Hiragino Mincho ProN','Noto Serif JP',serif;line-height:1.8;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.search-hit-text mark{color:#542f26;background:#f6d9b4;border-radius:2px;padding:1px 0}
+.search-empty{font-size:13px;color:var(--muted);padding:20px 8px;line-height:1.8}
+.search-foot{margin:0;font-size:11px;line-height:1.7;color:var(--muted)}
+@media(max-width:700px){.search-panel{padding:15px;gap:10px}.search-head h2{font-size:19px}.search-dialog{max-height:90dvh}.search-panel{max-height:90dvh}.search-hit{padding:8px 10px}}
+@media print{.search-dialog{display:none!important}}
 </style>
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">範囲選択ドラッグ改善 v1.2m</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">変換線修正テスト v1.2r</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><button type="button" id="cloudSyncNow" class="subtle" title="画面を再読み込みせず同期">↻ 今すぐ同期</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -289,7 +337,7 @@ html{scroll-padding-top:64px}
     <div class="tab-group" role="group" aria-label="表示スタイル"><button class="mode active" data-style="manu">原稿用紙</button><button class="mode" data-style="tank">単行本</button><button class="mode" data-style="bunko">文庫本</button></div>
     <div class="tools-right"><label class="check-control" id="horizontalOption"><input type="checkbox" id="horizontal"> 横書き</label><label class="check-control" id="titleOption"><input type="checkbox" id="showGutterTitle" checked> 中央タイトル</label><label class="check-control"><input type="checkbox" id="kinsoku"> 禁則処理</label></div>
   </div>
-  <div class="tool-row"><button class="secondary" id="rubyAdd" title="選択した言葉にだけルビを付けます">＋ 選択語にルビ</button><button class="secondary" id="rubyRemove">ルビを外す</button><button class="secondary" type="button" id="copySel" title="選択した文字をコピーします">コピー</button><button class="secondary" type="button" id="pasteSel" title="カーソル位置(選択中なら選択部分)に貼り付けます">貼り付け</button><button class="secondary" type="button" id="memoToggle" aria-expanded="false" title="メモ帳を開閉します">メモ</button><div class="mini-help" id="editHelp">原稿用紙は右上から縦に書くよ</div><div class="editor-undo" role="group" aria-label="本文の取り消しとやり直し"><button class="secondary" type="button" id="undoBody" title="本文を取り消す（⌘Z / Ctrl+Z）" disabled>↶ 取り消す</button><button class="secondary" type="button" id="redoBody" title="本文をやり直す（Shift+⌘Z / Ctrl+Y）" disabled>↷ やり直す</button></div><button class="secondary" id="historyBtn">履歴</button><button class="secondary" id="exportBtn">書き出し ▾</button></div>
+  <div class="tool-row"><button class="secondary" id="rubyAdd" title="選択した言葉にだけルビを付けます">＋ 選択語にルビ</button><button class="secondary" id="rubyRemove">ルビを外す</button><button class="secondary" type="button" id="copySel" title="選択した文字をコピーします">コピー</button><button class="secondary" type="button" id="pasteSel" title="カーソル位置(選択中なら選択部分)に貼り付けます">貼り付け</button><button class="secondary" type="button" id="memoToggle" aria-expanded="false" title="メモ帳を開閉します">メモ</button><div class="mini-help" id="editHelp">原稿用紙は右上から縦に書くよ</div><div class="editor-undo" role="group" aria-label="本文の取り消しとやり直し"><button class="secondary" type="button" id="undoBody" title="本文を取り消す（⌘Z / Ctrl+Z）" disabled>↶ 取り消す</button><button class="secondary" type="button" id="redoBody" title="本文をやり直す（Shift+⌘Z / Ctrl+Y）" disabled>↷ やり直す</button></div><button class="secondary" type="button" id="searchOpen" title="本文から言葉を探す">⌕ 検索</button><button class="secondary" id="historyBtn">履歴</button><button class="secondary" id="exportBtn">書き出し ▾</button></div>
   <div class="paper-controls" aria-label="原稿の表示倍率">
     <span>原稿の表示倍率</span>
     <button type="button" id="zoomOut" class="zoom-button" aria-label="原稿を縮小">－</button>
@@ -313,6 +361,22 @@ html{scroll-padding-top:64px}
   <div class="ruby-list-head">この作品のルビ <span id="rubyCount">0</span></div><div id="rubyList" class="ruby-list"><span class="empty-note">まだルビはありません</span></div>
 </aside>
 </div>
+
+<!-- Search is read-only: no text replacement, editor selection, scrolling, or cloud request. -->
+<dialog id="searchDialog" class="search-dialog" aria-labelledby="searchDialogTitle">
+  <div class="search-panel">
+    <div class="search-head"><div><span class="kicker">FIND IN WORKS</span><h2 id="searchDialogTitle">本文を検索</h2></div><button type="button" class="secondary" id="searchClose">閉じる</button></div>
+    <label for="searchQuery">探したい言葉（完全一致）</label>
+    <input id="searchQuery" type="search" maxlength="120" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="例：神宮、子供、子ども">
+    <fieldset class="search-scope"><legend>検索範囲</legend>
+      <label><input type="radio" name="searchScope" value="current" checked>この作品</label>
+      <label><input type="radio" name="searchScope" value="all">全作品</label>
+    </fieldset>
+    <div id="searchSummary" class="search-summary" role="status" aria-live="polite">検索したい言葉を入力してね</div>
+    <div id="searchResults" class="search-results" aria-label="本文検索結果" tabindex="0"></div>
+    <p class="search-foot">本文だけを読み取る検索だよ。前後の文章と位置を表示するけど、本文へのジャンプ・置換はまだできないよ。全作品はこの端末に読み込まれている作品が対象。</p>
+  </div>
+</dialog>
 <dialog id="exportDialog"><form method="dialog" class="dialog-body"><h2>書き出し</h2><p>現在の作品をファイルに保存するよ</p><div class="dialog-actions-col"><button type="button" data-export="pdf">PDF（直接書き出し・ページ番号付き β）</button><button type="button" data-export="pdf-print">PDF（従来の印刷画面から保存）</button><button type="button" data-export="docx">Word / Pages（.docx）</button><button type="button" data-export="txt">テキスト（.txt）</button><button type="button" data-export="json">この作品の暗号化バックアップ（.json）</button><button type="button" data-export="all">全作品の暗号化バックアップ（.json）</button><button type="button" id="deleteWork" style="color:#a04c3c">現在の作品を削除</button></div><button value="cancel" formnovalidate class="cancel-dialog">閉じる</button></form></dialog>
 <dialog id="rubyDialog"><form method="dialog" id="rubyForm" class="dialog-body"><h2>ルビを付ける</h2><p><strong id="rubyBaseText">選択語</strong> にだけ読みを付けるよ</p><label for="rubyTarget">ルビを付ける言葉（選択できない場合は入力）</label><input id="rubyTarget" maxlength="100" placeholder="例：蜃気楼" required><label for="rubyOccurrence" id="rubyOccurrenceLabel" hidden>どの箇所に付ける？</label><select id="rubyOccurrence" hidden></select><label for="rubyReading">読みがな</label><input id="rubyReading" maxlength="80" placeholder="例：しんきろう" required><div class="dialog-footer"><button value="cancel" formnovalidate class="secondary">キャンセル</button><button id="rubySubmit" type="submit" value="ok" class="primary">追加する</button></div></form></dialog>
 <dialog id="historyDialog"><div class="dialog-body"><h2>端末内の復元履歴</h2><p>復元すると現在の文章は変更されるので、念のためバックアップも取ってね。</p><div id="historyList" class="history-list"></div><button id="closeHistory" class="secondary">閉じる</button></div></dialog>
@@ -328,8 +392,10 @@ html{scroll-padding-top:64px}
   <input id="cloudPassword" type="password" autocomplete="current-password" placeholder="Firebaseで作ったパスワード" />
   <label for="cloudPassphrase">原稿暗号化用パスフレーズ（別のもの・12文字以上）</label>
   <input id="cloudPassphrase" type="password" autocomplete="off" placeholder="忘れないように安全に保管してね" />
+  <label style="display:flex;align-items:center;gap:7px"><input type="checkbox" id="cloudRemember" style="width:auto" /> この端末で暗号化鍵を24時間保持</label>
+  <p style="font-size:12px">自分専用の端末のみ。最後にパスフレーズを入力した時から24時間。端末内に復号可能な鍵を保存するため、端末のロックを必ず使用してね。</p>
   <div id="cloudDialogMessage" role="status" style="font-size:12px;line-height:1.5;color:#a04c3c"></div>
-  <div class="dialog-footer" style="flex-wrap:wrap"><button type="button" id="cloudLogout" class="secondary">ログアウト</button><button type="button" id="cloudClose" class="secondary">閉じる</button><button type="button" id="cloudConnect" class="primary">ログイン・暗号化同期を開始</button></div>
+  <div class="dialog-footer" style="flex-wrap:wrap"><button type="button" id="cloudLock" class="secondary">今すぐロック</button><button type="button" id="cloudLogout" class="secondary">ログアウト</button><button type="button" id="cloudClose" class="secondary">閉じる</button><button type="button" id="cloudConnect" class="primary">ログイン・暗号化同期を開始</button></div>
   <p>同期の衝突時は原稿を自動で混ぜず、競合コピーを残すよ。端末の保存は暗号化されていないため、デバイス自体のロックと暗号化バックアップも必須。</p>
  </div>
 </dialog>
@@ -786,7 +852,23 @@ function syncNativeVisual(el){
  const slot=el.closest('.half-slot');if(!slot)return;
  const visual=slot.querySelector('.native-visual'),cursor=slot.querySelector('.native-caret');
  if(!visual||!cursor)return;
- const {shown,visualStart,visualEnd,caretEnd,start,end,focused,ime}=imeDisplay(el);
+ const state=imeDisplay(el);
+ const {shown,start,end,focused,ime}=state;
+ let {visualStart,visualEnd,caretEnd}=state;
+ const marking=focused&&nativeComposing.has(el)&&!!ime;
+ visual.classList.toggle('ime-marking',marking);
+ if(marking){
+  // 元の前後の文章が一致する場合、変換範囲は textarea の選択位置ではなく
+  // 表示中の文字列から算出する。iOSの選択位置の一時的な遅れに依存しない。
+  const prefix=ime.base.slice(0,ime.start),suffix=ime.base.slice(ime.end);
+  if(shown.length>=prefix.length+suffix.length&&shown.startsWith(prefix)&&shown.endsWith(suffix)){
+   visualStart=prefix.length;visualEnd=shown.length-suffix.length;caretEnd=visualEnd;
+  }else{
+   visualStart=Math.max(0,Math.min(shown.length,visualStart));
+   visualEnd=Math.max(visualStart,Math.min(shown.length,visualStart+(ime.data||'').length));
+   caretEnd=visualEnd;
+  }
+ }
  const k=halfEls.indexOf(el),origin=k<0?0:pieceTexts.slice(0,k).join('').length;
  const lines=layoutLines(shown,20,!!current()?.kinsoku);
  visual.replaceChildren(makeNativeVisualLines(shown,visualStart,visualEnd,rubiesDuringComposition(el,shown,origin,current()?.rubies||[]),origin,20,!!current()?.kinsoku));
@@ -1012,7 +1094,7 @@ function revealBookStart(){
  const view=$('paperViewport');
  requestAnimationFrame(()=>{view.scrollLeft=Math.max(0,view.scrollWidth-view.clientWidth)});
 }
-function renderSettings(){const w=current();$('workTitle').value=w.title;$('horizontal').checked=w.horizontal;$('showGutterTitle').checked=w.showTitle;$('kinsoku').checked=w.kinsoku;$('manuView').hidden=activeStyle!=='manu';$('bookView').hidden=activeStyle==='manu';$('horizontalOption').hidden=activeStyle!=='manu';$('titleOption').hidden=activeStyle!=='manu';document.body.classList.toggle('kinsoku-on',w.kinsoku);$('bookView').className='book-view '+(activeStyle==='bunko'?'bunko':'tank');document.querySelectorAll('.mode').forEach(e=>e.classList.toggle('active',e.dataset.style===activeStyle));$('editHelp').textContent=activeStyle==='manu'?'原稿用紙のマス目に直接入力（組版は試作段階）':activeStyle==='tank'?'単行本風の縦書き編集（長押しで語句選択）':'文庫本風の縦書き編集（長押しで語句選択）';$('noteText').value=noteMode==='work'?w.note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア';updateStats();renderRubyList()}
+function renderSettings(){const w=current();$('workTitle').value=w.title;$('horizontal').checked=w.horizontal;$('showGutterTitle').checked=w.showTitle;$('kinsoku').checked=w.kinsoku;$('manuView').hidden=activeStyle!=='manu';$('bookView').hidden=activeStyle==='manu';$('horizontalOption').hidden=activeStyle!=='manu';$('titleOption').hidden=activeStyle!=='manu';document.body.classList.toggle('kinsoku-on',w.kinsoku);$('bookView').className='book-view '+(activeStyle==='bunko'?'bunko':'tank');document.querySelectorAll('.mode').forEach(e=>e.classList.toggle('active',e.dataset.style===activeStyle));$('editHelp').textContent=activeStyle==='manu'?'原稿用紙のマス目に直接入力（組版は試作段階）':activeStyle==='tank'?'単行本風の縦書き編集（ダブルタップで語句選択）':'文庫本風の縦書き編集（ダブルタップで語句選択）';$('noteText').value=noteMode==='work'?w.note:globalNote;$('noteLabel').textContent=noteMode==='work'?'この作品の設定やアイデア':'どの作品にも属さないアイデア';updateStats();renderRubyList()}
 function renderAll(caret=null){if(!current())return;renderBusy=true;renderSettings();if(activeStyle==='manu')renderM(caret);else renderBook(caret);renderBusy=false;ensureBodyHistory(current());updateBodyUndoButtons()}
 function selectedTextInfo(){
  const off=getSelectionOffsets(),w=current();if(!w)return null;
@@ -1324,7 +1406,7 @@ function wireTankPageScroll(el){
   if(isTankNativeEditor(document.activeElement)&&performance.now()<=tankPageScroll.until)tankScrollSchedule(document.activeElement)
  },{passive:true});
 }
-/* 原稿用紙(半面textarea)専用: ダブルタップ / 長押しで語句選択。
+/* 原稿用紙(半面textarea)専用: ダブルタップで語句選択。
    単行本・文庫本の selectBookWord と同じ考え方で、見た目の座標から位置を逆算する。
    ワンタップのカーソル移動(setCaretFromTap)や他の処理は変更しない。 */
 function wireHalfTouchSelect(el){
@@ -1395,8 +1477,8 @@ function wireHalfTouchSelect(el){
   const rec={x:e.clientX,y:e.clientY,id:e.pointerId,index,caret,wasSelected,fired:false,timer:0,
    downAt:performance.now(),selectionStart:el.selectionStart,selectionEnd:el.selectionEnd,
    scrollY:window.scrollY,scrollTop:$('paperViewport').scrollTop};
-  // 選択解除のためのタップでは長押し選択を起動しない。
-  if(!wasSelected&&index!==null)rec.timer=setTimeout(()=>{if(press===rec&&document.visibilityState!=='hidden'&&Math.abs(window.scrollY-rec.scrollY)<2&&Math.abs($('paperViewport').scrollTop-rec.scrollTop)<2){rec.fired=pick(rec.index)}},620);
+  // 選択解除のためのタップでは前回選択を維持せず、タップとして処理する。
+  // v1.2p: 長押しによる独自の語句選択は起動しない。ダブル/トリプルタップは pointerup で引き続き有効。
   press=rec;
  });
  el.addEventListener('pointermove',e=>{
@@ -1415,7 +1497,7 @@ function wireHalfTouchSelect(el){
   const rec=press;press=null;
   if(!touchy(e)||!rec||rec.id!==e.pointerId)return;
   clearTimeout(rec.timer);
-  if(rec.fired){lastTap=null;el._wordSelHold=performance.now()+900;return} // 長押しで選択済み
+  if(rec.fired){lastTap=null;el._wordSelHold=performance.now()+900;return} // 旧選択フラグとの互換
   const now=performance.now();
   if(rec.wasSelected){
    // 選択ハンドルの微調整や長押しを、単発タップと誤認しない。
@@ -2110,7 +2192,7 @@ if(nativeInPlace){
     if(epoch===bookSelectionEpoch&&selected===lastSel)reapplySel();
    },d));
   }
-  // iPhone で見た目の本文を長押ししたときも「選択語にルビ」を使えるようにする。
+  // v1.2p: 通常タップとダブルタップを認識（長押しでの自動語句選択は無効）。
   preview.addEventListener('pointerdown',e=>{
    if(e.pointerType!=='touch'&&e.pointerType!=='pen')return;
    // UI上の文字とIME欄を別要素にしているため、プレビュー側の
@@ -2131,13 +2213,8 @@ if(nativeInPlace){
     selectionStart:t.selectionStart,selectionEnd:t.selectionEnd};bookPress=record;
    focusBookFromGesture();
    // v1.2m: 選択ハンドルのドラッグを妨げるので、触れた瞬間には範囲を畳まない。
-   // 選択解除のための最初のタップを長押し選択へ昇格させない。
-   if(!wasSelected&&glyphIndex!==null)record.timer=setTimeout(()=>{
-    if(bookPress===record&&document.visibilityState!=='hidden'&&Math.abs(window.scrollY-record.scrollY)<2&&Math.abs($('paperViewport').scrollTop-record.scrollTop)<2){
-     lastBookTap=null;
-     selectBookWord(record.x,record.y,record.glyphIndex);bookPress=null;
-    }
-   },620);
+   // 選択解除用の最初のタップでは範囲を畳まず、pointerup で判定する。
+  // v1.2p: 長押しの自動語句選択を停止。ここではタイマーを作らず、既存の選択ハンドルとダブルタップ処理を保持。
   });
   // Safariはtouchstartを「キーボード起動を許す直接操作」として扱う。
   // timer/描画フレームの中で初めてfocusするのを避けるための補助。
@@ -2160,7 +2237,7 @@ if(nativeInPlace){
   $('paperViewport').addEventListener('scroll',()=>{if(bookPress)cancelBookPress()},{passive:true});
   window.addEventListener('scroll',()=>{if(bookPress)cancelBookPress()},{passive:true});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelBookPress()});
-  // pointerupが欠落したSafariでも長押しタイマーを放置しない。
+  // pointerupが欠落したSafariでもタップ記録を放置しない。
   preview.addEventListener('touchend',()=>{
    const rec=bookPress;
    if(rec)setTimeout(()=>{if(bookPress===rec)endPress()},0);
@@ -2226,7 +2303,7 @@ if(nativeInPlace){
    // 単発タップの合成 click は止めず、Safari がキーボードを起動できる機会を確保する。
    // 指を置いた座標は keyboard 表示による viewport 変化前のものを使う。
    if(performance.now()-lastTouchBookUp<750){
-    if(lastSel){e.preventDefault();return;} // 長押し/ダブルタップの語句選択は保護
+    if(lastSel){e.preventDefault();return;} // ダブルタップの語句選択は保護
     const hit=pendingBookTap;
     pendingBookTap=null;
     if(hit&&performance.now()-hit.time<750){
@@ -2555,7 +2632,8 @@ function initPaperPinchZoom(view,setZoom){
  },true);
 }
 
-async function init(){configure();initViewControls();try{db=await openDB();const rows=await txRead('works','getAll');for(const row of rows){const w=normalWork(row);works.set(w.id,w)}globalNote=(await txRead('settings','get','globalNote'))?.value||'';if(!works.size){const a=makeWork('はじめての物語');works.set(a.id,a);transientStarterId=a.id}let preferred;try{preferred=localStorage.getItem('kotonoha-current-id')}catch(e){}currentId=works.has(preferred)?preferred:[...works.keys()][0];renderAll();refreshWorkList();setState('この端末に保存済み');}catch(e){console.error(e);setState('端末保存を利用できません',true);$('safetyBanner').textContent='端末保存の初期化に失敗しました。ブラウザのプライベートモードを解除するなどして再度開いてね。';return}
+let cloudBridgeReady=false;
+async function init(){configure();initViewControls();try{db=await openDB();const rows=await txRead('works','getAll');for(const row of rows){const w=normalWork(row);works.set(w.id,w)}globalNote=(await txRead('settings','get','globalNote'))?.value||'';if(!works.size){const a=makeWork('はじめての物語');works.set(a.id,a);transientStarterId=a.id}let preferred;try{preferred=localStorage.getItem('kotonoha-current-id')}catch(e){}currentId=works.has(preferred)?preferred:[...works.keys()][0];renderAll();refreshWorkList();setState('この端末に保存済み');cloudBridgeReady=true;}catch(e){console.error(e);setState('端末保存を利用できません',true);$('safetyBanner').textContent='端末保存の初期化に失敗しました。ブラウザのプライベートモードを解除するなどして再度開いてね。';return}
 if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')){navigator.serviceWorker?.register('./sw.js').catch(e=>console.warn('serviceworker',e))}
 }
 /* 入力後にキーボードを閉じやすくする: ①余白をタップ ②タイトルでEnter */
@@ -2575,14 +2653,90 @@ if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostn
  const title=document.getElementById('workTitle');
  if(title){title.enterKeyHint='done';title.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();title.blur()}})}
 })();
+
+/* v1.2o: read-only search. Never touches editor selection, renderAll(), change(), persistence, or cloud. */
+(function setupReadOnlySearch(){
+ const dialog=$('searchDialog'),input=$('searchQuery'),results=$('searchResults'),summary=$('searchSummary');
+ let pending=null;
+ const DISPLAY_LIMIT=160;
+ function makeText(tag,value,cls){const el=document.createElement(tag);if(cls)el.className=cls;el.textContent=value;return el}
+ function showEmpty(message){results.replaceChildren(makeText('p',message,'search-empty'))}
+ function excerpt(source,index,term){
+  // Characters near the hit are only for the preview. Avoid innerHTML for manuscript content.
+  const before=source.slice(Math.max(0,index-27),index).replace(/\r\n?|\n/g,'↵');
+  const after=source.slice(index+term.length,index+term.length+27).replace(/\r\n?|\n/g,'↵');
+  const line=document.createElement('div');line.className='search-hit-text';
+  line.append(document.createTextNode((index>27?'…':'')+before));
+  line.append(makeText('mark',term));
+  line.append(document.createTextNode(after+(index+term.length+27<source.length?'…':'')));
+  return line;
+ }
+ function runSearch(){
+  pending=null;
+  if(!dialog.open)return;
+  const term=input.value;
+  if(!term){summary.textContent='検索したい言葉を入力してね';showEmpty('この作品、または全作品の本文から探せるよ。');return}
+  if(term.length>120)return;
+  const scope=dialog.querySelector('input[name="searchScope"]:checked')?.value||'current';
+  const candidates=scope==='all'?[...works.values()].filter(w=>!isUnusedStarter(w.id)).sort((a,b)=>Number(b.updated||0)-Number(a.updated||0)):[current()].filter(Boolean);
+  let total=0,shown=0,workHits=0;
+  const fragment=document.createDocumentFragment();
+  for(const work of candidates){
+   const source=String(work.text||'');if(!source)continue;
+   let index=0,count=0,group=null,priorOffset=0,priorChar=0;
+   while((index=source.indexOf(term,index))!==-1){
+    count++;total++;
+    if(shown<DISPLAY_LIMIT){
+     if(!group){group=document.createElement('section');group.className='search-group';group.dataset.workId=work.id;
+      const head=makeText('div',String(work.title||DEFAULT_TITLE),'search-group-head');
+      const badge=makeText('span','','search-group-count');head.append(badge);group.append(head);
+      group._countLabel=badge;
+     }
+     // Compute character position with Unicode code points while avoiding an O(n^2) full prefix scan.
+     priorChar+=Array.from(source.slice(priorOffset,index)).length;
+     const charIndex=priorChar+1;
+     priorOffset=index;
+     const hit=document.createElement('div');hit.className='search-hit';
+     hit.append(makeText('div','本文の約 '+charIndex.toLocaleString('ja-JP')+' 文字目','search-hit-place'));
+     hit.append(excerpt(source,index,term));group.append(hit);shown++;
+    }
+    index+=term.length; // nonoverlapping exact matches; always moves forward for nonempty term
+   }
+   if(count){workHits++;if(group){group._countLabel.textContent=count.toLocaleString('ja-JP')+'件';delete group._countLabel;fragment.append(group)}}
+  }
+  summary.textContent=scope==='all'?`${workHits}作品で合計 ${total.toLocaleString('ja-JP')} 件`:`この作品で ${total.toLocaleString('ja-JP')} 件`;
+  if(total>DISPLAY_LIMIT)summary.textContent+=`（一覧は最初の${DISPLAY_LIMIT}件まで）`;
+  if(!total)showEmpty('一致する語句は見つからなかったよ。表記の違い（漢字／ひらがななど）も試してみてね。');
+  else results.replaceChildren(fragment);
+  results.scrollTop=0;
+ }
+ const schedule=()=>{clearTimeout(pending);pending=setTimeout(runSearch,130)};
+ $('searchOpen').addEventListener('click',()=>{
+  clearTimeout(pending);
+  input.value='';
+  dialog.querySelector('input[name="searchScope"][value="current"]').checked=true;
+  dialog.showModal();
+  runSearch();
+  // Do not force focus on the iPhone; opening the keyboard is the user's choice.
+ });
+ $('searchClose').addEventListener('click',()=>dialog.close());
+ input.addEventListener('input',schedule);
+ dialog.querySelectorAll('input[name="searchScope"]').forEach(r=>r.addEventListener('change',()=>{clearTimeout(pending);runSearch()}));
+ dialog.addEventListener('close',()=>{clearTimeout(pending);pending=null});
+ // Clicking the backdrop closes the search dialog but never interacts with the editor below.
+ dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close()});
+})();
+
 /* このブリッジはクラウド同期用。オリジナルの執筆・入力エンジンを変更しない。 */
 window.KotonohaBridge={
-  ready:()=>!!db,
+  ready:()=>cloudBridgeReady,
   list:()=>[...works.values()].filter(x=>!isUnusedStarter(x.id)).map(x=>structuredClone(x)),
   get:id=>works.has(id)&&!isUnusedStarter(id)?structuredClone(works.get(id)):null,
   note:()=>globalNote,
   readMeta:async key=>(await txRead('settings','get','cloud:'+key))?.value||null,
   writeMeta:async(key,value)=>txWrite('settings','put',{key:'cloud:'+key,value}),
+  deleteMeta:async key=>txWrite('settings','delete','cloud:'+key),
+  syncReady:()=>!hasLocalSaveRisk() && !composing && !imeFinalizing && ![...halfEls,$('bookEditor')].some(el=>el&&(nativeComposing.has(el)||nativePending.has(el))),
   importWork:async work=>{
     const w=normalWork(work);
     // Write the received work first. Never lose the placeholder if persistence fails.
@@ -2641,6 +2795,6 @@ window.KotonohaBridge={
 init();
 
 </script>
-<script type="module" src="./cloud-sync.js?v=20261107-starter-v1"></script>
+<script type="module" src="./cloud-sync.js?v=20261127-sync-v12q"></script>
 </body>
 </html>
