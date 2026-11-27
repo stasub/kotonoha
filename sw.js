@@ -1,7 +1,7 @@
 /* ことのは帖 PWA オフライン起動用 Service Worker
    静的ファイルだけをキャッシュします。原稿・メモ・バックアップはキャッシュしません。
    アプリ更新時は CACHE_VERSION を変更してください。 */
-const CACHE_VERSION = 'kotonoha-static-sync-2026-11-27-v12r';
+const CACHE_VERSION = 'kotonoha-static-sync-2026-11-27-v12s';
 const CACHE_PREFIX = 'kotonoha-static-';
 const ROOT = new URL('./', self.registration.scope);
 const ASSETS = [
