@@ -113,7 +113,7 @@
   font-size:.5em;line-height:1;letter-spacing:0;color:var(--accent);
   pointer-events:none;z-index:3;user-select:none;-webkit-user-select:none;
 }
-.native-visual .ruby-float{font-size:10px}
+.native-visual .ruby-float{font-size:var(--manu-ruby-size)}
 /* 他の列へはみ出すことは許可するが、通常の本文・タップ領域は動かさない。 */
 .book-preview{overflow:visible!important}
 .book-surface{overflow:visible}
@@ -155,7 +155,7 @@
 @media print{.book-preview{pointer-events:none!important}}
 /* v0.2.5: 原稿用紙の全列(横書きは全行)にルビ用の空列を設ける。
    1列 = [ルビ用の空列 --rg | 文字マス --step]。右端の列にも空列があるので余白は不要。 */
-:root{--rg:12px;--pitch:calc(var(--step) + var(--rg));--ruby-safe:0px}
+:root{--rg:12px;--pitch:calc(var(--step) + var(--rg));--ruby-safe:0px;--manu-ruby-size:calc(var(--cell)*.384615)}
 .manu-sheet{width:calc(var(--pitch)*20 + var(--gutter) + 4px);padding-right:0;padding-top:0}
 .half,.half-slot{width:calc(var(--pitch)*10)}
 .half{line-height:var(--pitch);
@@ -167,7 +167,7 @@
   linear-gradient(to bottom,var(--grid) .65px,transparent .65px)}
 .native-visual .editor-line{margin-block-start:var(--rg)}
 .half:not(:is(textarea)) .editor-line{box-sizing:border-box;block-size:var(--pitch);padding-block-start:var(--rg);line-height:var(--step)}
-.native-visual .ruby-float{left:calc(100% + (var(--rg) - 10px)/2)}
+.native-visual .ruby-float{left:calc(100% + (var(--rg) - var(--manu-ruby-size))/2)}
 .manu-horizontal .manu-sheet{width:calc(var(--cell)*20 + 4px);height:calc(var(--pitch)*20 + var(--gutter) + 4px);padding:0}
 .manu-horizontal .half,.manu-horizontal .half-slot{width:calc(var(--cell)*20);height:calc(var(--pitch)*10)}
 .manu-horizontal .half{line-height:var(--pitch);
@@ -193,6 +193,17 @@
 .manu-horizontal .native-visual .editor-glyph.hang{top:0;right:auto;left:calc(var(--cell)*19.6);inline-size:calc(var(--cell)*.5);block-size:var(--step)}
 .native-visual[data-ov="next"]{overflow:visible!important}
 .native-visual[data-ov="next"] .editor-line:nth-child(n+11){margin-block-start:calc(var(--rg) + var(--gutter))}
+/* v1.2n: 文字だけを枠内にクリップし、ルビは独立した前景レイヤーに描く。
+   最下段の読みが枠線で隠れないようにする。タップ領域には触れない。 */
+.half-slot{z-index:2}
+.manu-ruby-layer{position:absolute;inset:0;z-index:3;pointer-events:none;overflow:visible;
+  writing-mode:vertical-rl;text-orientation:mixed;white-space:nowrap;
+  font-family:"Yu Mincho","Hiragino Mincho ProN","Noto Serif JP",serif;color:var(--accent)}
+.manu-ruby-face{position:absolute;display:block;font-size:var(--manu-ruby-size);
+  line-height:1;letter-spacing:0;white-space:nowrap;writing-mode:vertical-rl;text-orientation:mixed}
+.manu-horizontal .manu-ruby-layer,.manu-horizontal .manu-ruby-face{writing-mode:horizontal-tb}
+.native-visual .ruby-float{visibility:hidden}
+
 /* v0.2.7: 単行本・文庫の選択範囲ハンドル(ダブルタップ/長押しで選んだあと、端をドラッグして調整) */
 .book-handle{position:absolute;z-index:6;width:28px;height:28px;border-radius:50%;background:var(--accent);border:3px solid #fff;box-shadow:0 1px 5px #0005;touch-action:none;display:none;-webkit-user-select:none;user-select:none;box-sizing:border-box}
 .book-handle.on{display:block}
@@ -725,6 +736,8 @@ function alignRubyFloats(root){
     const rgv=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--rg'))||14;mark.style.top=(-(rgv+mr.height)/2)+'px';
    }else{
     mark.style.top=(((a.top+b.bottom)/2-lineRect.top-mr.height/2)/zs)+'px';
+    // v1.2n: 親文字の実際の右端を基準にする。70% の CSS zoom でも間隔を一定に。
+    if(root.closest?.('.book-view'))mark.style.left=((a.right-lineRect.left)/zs+1)+'px';
    }
   }
  }
@@ -753,6 +766,19 @@ function imeDisplay(el){
  }
  return{shown,visualStart,visualEnd,caretEnd,start,end,focused,ime};
 }
+/* v1.2n: ルビを本文の切り抜きレイヤーから複製し、枠線より手前に描画。 */
+function paintManuRubyLayer(slot,visual){
+ const layer=slot.querySelector('.manu-ruby-layer');if(!layer)return;
+ layer.replaceChildren();
+ const bounds=slot.getBoundingClientRect();
+ for(const mark of visual.querySelectorAll('.ruby-float')){
+  const r=mark.getBoundingClientRect();if(!r.width||!r.height)continue;
+  const face=document.createElement('span');face.className='manu-ruby-face';
+  face.textContent=mark.textContent;
+  face.style.left=(r.left-bounds.left)+'px';face.style.top=(r.top-bounds.top)+'px';
+  layer.append(face);
+ }
+}
 function syncNativeVisual(el){
  if(!el?.isConnected)return;
  if(el.id==='bookEditor'){syncBookPreview();return}
@@ -766,6 +792,7 @@ function syncNativeVisual(el){
  visual.replaceChildren(makeNativeVisualLines(shown,visualStart,visualEnd,rubiesDuringComposition(el,shown,origin,current()?.rubies||[]),origin,20,!!current()?.kinsoku));
  visual.dataset.ov=(k%2===0)?'next':'clip';
  alignRubyFloats(visual);
+ paintManuRubyLayer(slot,visual);
  const {col,row}=displayPoint(lines,caretEnd);
  if(!focused||(start!==end&&!ime)||col>=10){cursor.style.display='none';return}
  const rootCss=getComputedStyle(document.documentElement);
@@ -859,8 +886,9 @@ function renderM(bCaret=null){const w=current(),parts=linePieces(w.text);pieceTe
   if(nativeInPlace){
    const slot=document.createElement('div');slot.className='half-slot';
    const display=document.createElement('div');display.className='native-visual';display.setAttribute('aria-hidden','true');
+   const rubyLayer=document.createElement('div');rubyLayer.className='manu-ruby-layer';rubyLayer.setAttribute('aria-hidden','true');
    const cursor=document.createElement('span');cursor.className='native-caret';cursor.setAttribute('aria-hidden','true');
-   slot.append(h,display,cursor);return slot;
+   slot.append(h,display,rubyLayer,cursor);return slot;
   }
   return h};const a=makeHalf(page*2),b=makeHalf(page*2+1);const spine=document.createElement('div');spine.className='spine';spine.innerHTML='<svg class="head-mark" viewBox="0 0 40 20"><path d="M4 16Q20 -8 36 16" stroke-width="2.5"/></svg><svg class="foot-mark" viewBox="0 0 40 20"><path d="M4 3L20 17L36 3" stroke-width="2"/></svg><span class="spine-name"></span><span class="page-num"></span>';spine.querySelector('.spine-name').textContent=w.showTitle?w.title:'';spine.querySelector('.page-num').textContent=page+1;sheet.append(a,spine,b);root.append(sheet)}if(bCaret!=null){const[i,off]=locatePiece(bCaret);caretIn(halfEls[i],off)}if(nativeInPlace)for(const el of halfEls)syncNativeVisual(el)}
 function renderBook(bCaret=null){
