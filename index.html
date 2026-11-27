@@ -212,9 +212,12 @@
 /* v0.2.8: 単行本・文庫でも、選択範囲の色付けと変換中の青ラインを出す */
 .book-preview .marked-char{background:rgba(61,132,247,.28);border-radius:2px}
 .book-preview.composing .marked-char{background:rgba(160,76,60,.14);box-shadow:inset 2.5px 0 0 #2f6fe4;border-radius:0}
-/* v1.2r: 原稿用紙の変換線を、IMEの内部折返しではなく表示済み文字に合わせる。
-   変換中のみ透明入力欄のネイティブ下線を紙面で覆う。通常の選択操作は維持。 */
-.native-visual.ime-marking{
+
+/* v1.2t: 固定紙面。IMEの開始・終了で背景やマス目を切り替えない。
+   ネイティブ入力欄の寸法・フォーカス・スクロールは v1.2q のまま。
+   ネイティブIME装飾は常設の不透明な紙面で覆い、文字の青線のみ切り替える。 */
+.half-slot>.half:is(textarea){background-image:none!important;background-color:transparent!important}
+.native-visual{
  background-color:var(--paper);
  background-size:var(--pitch) var(--cell);
  background-position:right top;background-repeat:repeat;
@@ -223,7 +226,7 @@
   linear-gradient(to left,var(--paper) 0,var(--paper) var(--rg),transparent var(--rg)),
   linear-gradient(to bottom,var(--grid) .65px,transparent .65px)
 }
-.manu-horizontal .native-visual.ime-marking{
+.manu-horizontal .native-visual{
  background-size:var(--cell) var(--pitch);background-position:left top;
  background-image:
   linear-gradient(to bottom,var(--grid) 0,var(--grid) .65px,transparent .65px,transparent calc(var(--rg) - .65px),var(--grid) calc(var(--rg) - .65px),var(--grid) var(--rg),transparent var(--rg)),
@@ -232,7 +235,7 @@
 }
 .native-visual.ime-marking .marked-char{box-shadow:inset 2.5px 0 0 #2f6fe4;border-radius:0}
 .manu-horizontal .native-visual.ime-marking .marked-char{box-shadow:inset 0 -2.5px 0 #2f6fe4}
-
+@media print{.native-visual{background-image:none!important;background-color:transparent!important}}
 
 /* v0.5 — document zoom: pinch in mobile, independent of exported content */
 :root{--paper-zoom:1;--library-width:218px;--notes-width:247px}
@@ -317,7 +320,7 @@ html{scroll-padding-top:64px}
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark">文</span><span><strong>ことのは帖</strong><small>小説を書く、小さな書斎</small></span></div>
-  <div class="top-actions"><span class="trial-tag">紙面安定化テスト v1.2s</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><button type="button" id="cloudSyncNow" class="subtle" title="画面を再読み込みせず同期">↻ 今すぐ同期</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
+  <div class="top-actions"><span class="trial-tag">固定紙面テスト v1.2t</span><button type="button" id="cloudOpen" class="subtle" title="クラウド同期を設定">☁ 同期を設定</button><button type="button" id="cloudSyncNow" class="subtle" title="画面を再読み込みせず同期">↻ 今すぐ同期</button><span id="cloudStatus" class="save-status" aria-live="polite">クラウド未接続</span><span id="saveState" class="save-status" aria-live="polite">保存準備中</span><button id="backupTop" class="subtle" title="全作品をバックアップ">バックアップ</button></div>
 </header>
 <div class="notice" id="safetyBanner"><strong>大事な原稿はまだ入力しないでね。</strong> この版は暗号化同期の検証用です。端末内データは暗号化されません。本番原稿はまだ入力しないでね。<button id="noticeClose" title="この案内を閉じる" aria-label="案内を閉じる">×</button></div>
 <div class="app-layout">
@@ -845,26 +848,6 @@ function paintManuRubyLayer(slot,visual){
   layer.append(face);
  }
 }
-// v1.2s: 同じ半面の同じ表示状態を何度も作り直さない。入力欄の値・選択・保存とは独立。
-const manuPaintState=new WeakMap();
-let manuRevealFrame=0;
-function revealManuCaretIfNeeded(el,cursor){
- // 実際の表示カーソルが画面外に出た場合だけ、次の描画で必要最小限の縦移動。
- // 旧来の固定スクロール位置への繰り返し復元は行わない。
- if(manuRevealFrame)cancelAnimationFrame(manuRevealFrame);
- manuRevealFrame=requestAnimationFrame(()=>{
-  manuRevealFrame=0;
-  if(!el.isConnected||document.activeElement!==el||cursor.style.display==='none')return;
-  const vv=window.visualViewport;
-  if(!vv||!matchMedia('(pointer:coarse)').matches||vv.height>=document.documentElement.clientHeight-110)return;
-  const r=cursor.getBoundingClientRect(), top=vv.offsetTop+12,bottom=vv.offsetTop+vv.height-20;
-  const dy=r.bottom>bottom?r.bottom-bottom:r.top<top?r.top-top:0;
-  if(Math.abs(dy)>2)window.scrollBy({top:dy,left:0,behavior:'instant'});
- });
-}
-// 指による閲覧をアプリ側の遅延スクロールで打ち消さない。
-document.addEventListener('touchstart',()=>{if(manuRevealFrame){cancelAnimationFrame(manuRevealFrame);manuRevealFrame=0}},{passive:true,capture:true});
-document.addEventListener('touchmove',()=>{if(manuRevealFrame){cancelAnimationFrame(manuRevealFrame);manuRevealFrame=0}},{passive:true,capture:true});
 function syncNativeVisual(el){
  if(!el?.isConnected)return;
  if(el.id==='bookEditor'){syncBookPreview();return}
@@ -890,20 +873,11 @@ function syncNativeVisual(el){
   }
  }
  const k=halfEls.indexOf(el),origin=k<0?0:pieceTexts.slice(0,k).join('').length;
- const kinsoku=!!current()?.kinsoku,horizontal=!!current()?.horizontal;
- const rubies=rubiesDuringComposition(el,shown,origin,current()?.rubies||[]).filter(r=>r.start<origin+shown.length&&r.end>origin&&r.end>r.start);
- // ルビは半面内の相対位置で比較。前のページで編集しても内容が同じなら描画を保持。
- const signature=JSON.stringify([shown,visualStart,visualEnd,marking,kinsoku,horizontal,k%2,paperViewScale(),rubies.map(r=>[r.start-origin,r.end-origin,r.reading])]);
- const previous=manuPaintState.get(el);
- const lines=previous?.signature===signature?previous.lines:layoutLines(shown,20,kinsoku);
- if(previous?.signature!==signature){
-  visual.replaceChildren(makeNativeVisualLines(shown,visualStart,visualEnd,rubies,origin,20,kinsoku));
-  visual.dataset.ov=(k%2===0)?'next':'clip';
-  alignRubyFloats(visual);
-  paintManuRubyLayer(slot,visual);
- }
- const moved=!previous||!previous.focused||previous.caretEnd!==caretEnd||previous.shown!==shown;
- manuPaintState.set(el,{signature,lines,focused,caretEnd,shown});
+ const lines=layoutLines(shown,20,!!current()?.kinsoku);
+ visual.replaceChildren(makeNativeVisualLines(shown,visualStart,visualEnd,rubiesDuringComposition(el,shown,origin,current()?.rubies||[]),origin,20,!!current()?.kinsoku));
+ visual.dataset.ov=(k%2===0)?'next':'clip';
+ alignRubyFloats(visual);
+ paintManuRubyLayer(slot,visual);
  const {col,row}=displayPoint(lines,caretEnd);
  if(!focused||(start!==end&&!ime)||col>=10){cursor.style.display='none';return}
  const rootCss=getComputedStyle(document.documentElement);
@@ -918,7 +892,6 @@ function syncNativeVisual(el){
   cursor.style.top=(row*cell+1)+'px';
  }
  cursor.style.display='block';
- if(moved)revealManuCaretIfNeeded(el,cursor);
 }
 /* タップで表示中の文字列の座標から本文内の位置を逆算する。
    iOS textarea の縦書きネイティブ当たり判定とは独立させる。 */
@@ -1295,8 +1268,8 @@ function nativeChangeFrom(el){
   // Same half retains focus, caret and native IME-owned DOM.
   pieceTexts=parts;
   for(let i=0;i<parts.length;i++)if(i!==k&&halfEls[i]?.value!==parts[i])halfEls[i].value=parts[i];
-  // 表示が変化した半面だけが実際に再描画される。透明入力欄を全ページ強制再描画しない。
   for(const half of halfEls)syncNativeVisual(half);
+   kickAllRepaint();
  }else{
   // Reflow only when characters actually cross a half/page boundary.
   renderM(caret);
@@ -1307,20 +1280,25 @@ function nativeChangeFrom(el){
 /* iOSは改行のたびに「カーソルを見せようと」枠の中身をスクロールし、ズレが積み重なる。
    原稿用紙の半面は固定サイズなので、スクロール位置は常に先頭へ戻す。 */
 function resetScroll(el){if(el?.classList?.contains('half')&&(el.scrollTop||el.scrollLeft)){el.scrollTop=0;el.scrollLeft=0}}
-// v1.2s: 透明な textarea の transform/opacity を点滅させる旧再描画処理を廃止。
-// マス目の表示更新と内部スクロール補正だけ残す。タイマーも半面ごとに重複させない。
-const manuResetJobs=new WeakMap();
 function kickRepaint(el){
- if(!el||el.id==='bookEditor')return;
+ if(!el)return;
+ if(el.id==='bookEditor'){return;} // 書籍の横方向の閲覧位置はリセットしない
+ // 元のtextareaが透明なので、通常入力・変換中のいずれも必ず表示層を更新する。
  syncNativeVisual(el);
  resetScroll(el);
- const old=manuResetJobs.get(el);
- if(old){cancelAnimationFrame(old.frame);clearTimeout(old.timer)}
- const reset=()=>{if(el.isConnected&&document.activeElement===el)resetScroll(el)};
- const frame=requestAnimationFrame(reset);
- const timer=setTimeout(()=>{reset();manuResetJobs.delete(el)},120);
- manuResetJobs.set(el,{frame,timer});
+ requestAnimationFrame(()=>resetScroll(el));
+ setTimeout(()=>resetScroll(el),120);
+ const run=()=>{
+  if(!el.isConnected||nativeComposing.has(el))return;
+  el.style.transform='translateZ(0)';
+  el.style.opacity='0.999';
+  void el.offsetHeight;
+  requestAnimationFrame(()=>{el.style.transform='';el.style.opacity=''});
+ };
+ requestAnimationFrame(run);
+ setTimeout(run,120);
 }
+function kickAllRepaint(){for(const h of halfEls)if(h)kickRepaint(h)}
 function nativeQueue(el,delay=60){
  clearTimeout(nativePending.get(el));
  const timer=setTimeout(()=>{
@@ -1360,8 +1338,7 @@ const tankPageScroll={anchor:0,until:0,moving:false,startY:null,startX:null,time
 function isTankNativeEditor(el){
  if(!nativeInPlace||!el)return false;
  if(el.id==='bookEditor')return true;
- // 原稿用紙は表示カーソル基準の単発補正に切替。単行本・文庫本は従来のまま。
- return false;
+ return !!el.classList?.contains('half')&&paperViewScale()>=1;
 }
 function tankScrollBegin(el){
  if(!isTankNativeEditor(el))return;
